@@ -22,7 +22,7 @@ jobs:
           - { leg: linux-x64-php8.2, os: ubuntu-24.04, php: '8.2', phpunit: '^11.5' }
           - { leg: linux-x64-php8.3, os: ubuntu-24.04, php: '8.3', phpunit: '^12.5' }
           - { leg: linux-x64-php8.4, os: ubuntu-24.04, php: '8.4', phpunit: '^13.4' }
-          - { leg: linux-x64-php8.5, os: ubuntu-24.04, php: '8.5', phpunit: '^13.4' }
+          - { leg: linux-x64-php8.5, os: ubuntu-24.04, php: '8.5', phpunit: '^13.4', release-assets: true }
           # Every platform with a Dynoxide release binary.
           - { leg: linux-arm64-php8.4, os: ubuntu-24.04-arm, php: '8.4', phpunit: '^13.4' }
           - { leg: macos-arm64-php8.4, os: macos-26, php: '8.4', phpunit: '^13.4' }
@@ -46,6 +46,18 @@ jobs:
 
       - name: Unit tests
         run: vendor/bin/phpunit --testsuite unit
+
+      # The embedded hashes against the real release, unpacked with the
+      # package's own readers. Skipping counts as failure here.
+      - name: Real release assets
+        if: matrix.release-assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(php -r 'require "vendor/autoload.php"; echo Dynoxide\Release::TAG;')
+          gh release download "$tag" -R nubo-db/dynoxide -D "$RUNNER_TEMP/assets"
+          DYNOXIDE_RELEASE_ASSETS="$RUNNER_TEMP/assets" vendor/bin/phpunit --group release-assets --fail-on-skipped
 
       - name: Record the leg
         shell: bash
