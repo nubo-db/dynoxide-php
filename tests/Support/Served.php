@@ -11,6 +11,9 @@ final class Served
 {
     public const CERT = __DIR__ . '/../Fixtures/tls/server.pem';
     public const CA = __DIR__ . '/../Fixtures/tls/cert.pem';
+    /** Trusted through BOTH_CA, but issued for wrong.example, not 127.0.0.1. */
+    public const WRONG_NAME_CERT = __DIR__ . '/../Fixtures/tls/wrong-name-server.pem';
+    public const BOTH_CA = __DIR__ . '/../Fixtures/tls/both-ca.pem';
 
     private readonly FixtureProcess $process;
     private readonly string $routesFile;
@@ -35,14 +38,15 @@ final class Served
     }
 
     /** @param array<string, array<string, mixed>> $routes */
-    public static function https(string $dir, array $routes = []): self
+    public static function https(string $dir, array $routes = [], string $cert = self::CERT): self
     {
-        return new self($dir, 'http-server.php', ['{routes}', '{log}', realpath(self::CERT) ?: self::CERT], $routes, 'https');
+        return new self($dir, 'http-server.php', ['{routes}', '{log}', realpath($cert) ?: $cert], $routes, 'https');
     }
 
-    public static function proxy(string $dir, ?string $credentials = null): self
+    /** @param float $delay seconds the reply to CONNECT waits */
+    public static function proxy(string $dir, ?string $credentials = null, float $delay = 0.0): self
     {
-        return new self($dir, 'http-proxy.php', array_values(array_filter(['{log}', $credentials])), [], 'http');
+        return new self($dir, 'http-proxy.php', ['{log}', $credentials ?? '', (string) $delay], [], 'http');
     }
 
     /** @param array<string, array<string, mixed>> $routes */

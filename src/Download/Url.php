@@ -16,13 +16,18 @@ final class Url
      * A URL is acceptable if it's https, or plain http to this machine with no
      * credentials in it.
      *
+     * A URL someone configured is also refused if it has an "@" outside the
+     * user:password part (see parse()). A redirect target isn't: its "@"s are
+     * the server's business, and none of our credentials are in it.
+     *
      * @return array{scheme: string, host: string, port: int, user: ?string, pass: ?string}
      */
-    public static function check(string $url): array
+    public static function check(string $url, bool $configured = true): array
     {
-        $parts = parse_url($url);
+        $what = 'a URL the package can download from';
+        $parts = $configured ? self::parse($url, $what) : parse_url($url);
         if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
-            throw new DownloadException('Not a URL the package can download from: ' . self::redact($url));
+            throw new DownloadException("Not {$what}: " . self::obscure($url));
         }
 
         $scheme = strtolower($parts['scheme']);
@@ -60,8 +65,60 @@ final class Url
             && str_starts_with($host, '127.');
     }
 
-    /** The URL with any credentials removed, for messages. */
+    /**
+     * Parses a URL someone configured, refusing one that has an "@" outside
+     * the user:password part. That happens when a password has an unencoded
+     * "/", "?", "#" or "@", and reading such a URL either way would put part
+     * of the password somewhere it gets shown or sent.
+     *
+     * @return array<string, int|string>
+     */
+    public static function parse(string $url, string $what): array
+    {
+        $parts = parse_url($url);
+        $stray = $parts === false
+            ? str_contains($url, '@')
+            : str_contains(($parts['path'] ?? '') . ($parts['query'] ?? '') . ($parts['fragment'] ?? ''), '@');
+        if ($stray) {
+            throw new DownloadException(
+                "Can't read " . self::obscure($url) . " as {$what}: it has an \"@\" outside the user:password part. "
+                . 'Percent-encode any / ? # or @ in the password (as %2F %3F %23 %40).',
+            );
+        }
+        if ($parts === false) {
+            throw new DownloadException("Not {$what}: " . self::obscure($url));
+        }
+
+        return $parts;
+    }
+
+    /**
+     * The URL for messages, with any user:password replaced by "***". For a
+     * URL that check() accepted, which can't have a stray "@".
+     */
     public static function redact(string $url): string
+    {
+        return (string) preg_replace('#^([a-z][a-z0-9+.-]*://)[^/?\#]*@#i', '$1***@', $url);
+    }
+
+    /**
+     * A URL that couldn't be read, for messages: everything before the last
+     * "@" goes, scheme or not, since there's no telling where a password
+     * with an unencoded "/", "?" or "#" ends.
+     */
+    private static function obscure(string $url): string
+    {
+        $at = strrpos($url, '@');
+        if ($at === false) {
+            return $url;
+        }
+        $scheme = strpos($url, '://');
+
+        return ($scheme !== false && $scheme < $at ? substr($url, 0, $scheme + 3) : '') . '***@' . substr($url, $at + 1);
+    }
+
+    /** The URL to request: credentials go in a header, never in the URL. */
+    public static function withoutCredentials(string $url): string
     {
         return (string) preg_replace('#^([a-z][a-z0-9+.-]*://)[^/?\#]*@#i', '$1', $url);
     }

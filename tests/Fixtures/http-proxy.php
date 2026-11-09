@@ -2,17 +2,19 @@
 
 declare(strict_types=1);
 
-// A forward proxy for download tests: CONNECT tunnels for https, and
-// absolute-URI requests for plain http. One connection at a time.
+// A forward proxy for download tests: CONNECT tunnels, which is all the
+// package sends a proxy. One connection at a time.
 //
-// Usage: php http-proxy.php <log.jsonl> [<user:pass>]
+// Usage: php http-proxy.php <log.jsonl> [<user:pass> [<seconds>]]
 //
-// Prints "PORT <n>" once listening. With credentials, any request without a
-// matching Proxy-Authorization gets a 407. Each request the proxy receives is
-// logged as one JSON line: method, target, headers.
+// Prints "PORT <n>" once listening. With credentials (an empty string for
+// none), any request without a matching Proxy-Authorization gets a 407. With
+// seconds, the reply to CONNECT waits that long. Each request the proxy
+// receives is logged as one JSON line: method, target, headers.
 
 $logFile = $argv[1];
-$credentials = $argv[2] ?? null;
+$credentials = ($argv[2] ?? '') === '' ? null : $argv[2];
+$delay = (float) ($argv[3] ?? 0);
 
 $server = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
 if ($server === false) {
@@ -26,12 +28,12 @@ fflush(STDOUT);
 while (true) {
     $client = @stream_socket_accept($server, 3600);
     if ($client !== false) {
-        handle($client, $logFile, $credentials);
+        handle($client, $logFile, $credentials, $delay);
     }
 }
 
 /** @param resource $client */
-function handle($client, string $logFile, ?string $credentials): void
+function handle($client, string $logFile, ?string $credentials, float $delay): void
 {
     stream_set_timeout($client, 5);
     $head = '';
@@ -45,16 +47,11 @@ function handle($client, string $logFile, ?string $credentials): void
         $head .= $line;
     }
     $lines = explode("\r\n", trim($head));
-    $requestLine = array_shift($lines);
-    [$method, $target, $version] = explode(' ', $requestLine) + [1 => '', 2 => 'HTTP/1.0'];
+    [$method, $target] = explode(' ', array_shift($lines)) + [1 => ''];
     $headers = [];
-    $forward = [];
     foreach ($lines as $line) {
         [$name, $value] = explode(':', $line, 2) + [1 => ''];
         $headers[strtolower(trim($name))] = trim($value);
-        if (strtolower(trim($name)) !== 'proxy-authorization') {
-            $forward[] = $line;
-        }
     }
     file_put_contents($logFile, json_encode(['method' => $method, 'target' => $target, 'headers' => $headers]) . "\n", FILE_APPEND | LOCK_EX);
 
@@ -64,31 +61,22 @@ function handle($client, string $logFile, ?string $credentials): void
 
         return;
     }
-
-    if ($method === 'CONNECT') {
-        $upstream = @stream_socket_client('tcp://' . $target, $errno, $errstr, 5);
-        if ($upstream === false) {
-            fwrite($client, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
-            fclose($client);
-
-            return;
-        }
-        fwrite($client, "HTTP/1.1 200 Connection established\r\n\r\n");
-        relay($client, $upstream);
+    if ($method !== 'CONNECT') {
+        fwrite($client, "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        fclose($client);
 
         return;
     }
 
-    $parts = parse_url($target);
-    $upstream = @stream_socket_client('tcp://' . $parts['host'] . ':' . ($parts['port'] ?? 80), $errno, $errstr, 5);
+    $upstream = @stream_socket_client('tcp://' . $target, $errno, $errstr, 5);
     if ($upstream === false) {
         fwrite($client, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
         fclose($client);
 
         return;
     }
-    $path = ($parts['path'] ?? '/') . (isset($parts['query']) ? '?' . $parts['query'] : '');
-    fwrite($upstream, "{$method} {$path} {$version}\r\n" . implode("\r\n", $forward) . "\r\n\r\n");
+    usleep((int) ($delay * 1e6));
+    fwrite($client, "HTTP/1.1 200 Connection established\r\n\r\n");
     relay($client, $upstream);
 }
 

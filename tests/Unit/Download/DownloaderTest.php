@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Dynoxide\Tests\Unit\Download;
 
 use Dynoxide\Download\Downloader;
+use Dynoxide\Exception\CacheException;
 use Dynoxide\Exception\DownloadException;
 use Dynoxide\Tests\Support\Served;
 use Dynoxide\Tests\Support\TempDir;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 
@@ -77,9 +79,116 @@ final class DownloaderTest extends TestCase
         try {
             $this->downloader()->toFile($server->url('/a'), $target);
             self::fail('Expected a refusal');
-        } catch (DownloadException) {
+        } catch (CacheException) {
             self::assertSame('old', file_get_contents($target));
         }
+    }
+
+    public function testStopsAtContentLengthWhenTheServerKeepsTheConnectionOpen(): void
+    {
+        $server = $this->http(['/a' => ['body' => 'all of it', 'keepOpen' => true]]);
+        $started = microtime(true);
+
+        self::assertSame('all of it', $this->downloader([], 10.0, 5.0)->toString($server->url('/a')));
+        self::assertLessThan(3.0, microtime(true) - $started);
+    }
+
+    public function testFollowsARedirectWithAnAtSignInIt(): void
+    {
+        $server = $this->http([
+            '/a' => ['status' => 302, 'headers' => ['Location' => '/gh/dynoxide@v1.7.0/x?sig=a@b']],
+            '/gh/dynoxide@v1.7.0/x' => ['body' => 'found'],
+        ]);
+
+        self::assertSame('found', $this->downloader()->toString($server->url('/a')));
+    }
+
+    public function testRefusesHeadersThatNeverEnd(): void
+    {
+        $server = $this->http(['/a' => ['raw' => "HTTP/1.1 200 OK\r\n" . str_repeat("X-Filler: " . str_repeat('x', 100) . "\r\n", 1000)]]);
+
+        $this->expectException(DownloadException::class);
+        $this->expectExceptionMessage('too long');
+        $this->downloader()->toString($server->url('/a'));
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function malformedChunks(): iterable
+    {
+        $head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+        yield 'a size that is not hex' => [$head . "zz\r\nhello\r\n0\r\n\r\n"];
+        yield 'an empty size' => [$head . "\r\nhello\r\n0\r\n\r\n"];
+        yield 'something other than CRLF after the data' => [$head . "5\r\nhelloXX\r\n0\r\n\r\n"];
+        yield 'a size too big to be real' => [$head . "1000000000000\r\nhello\r\n0\r\n\r\n"];
+    }
+
+    #[DataProvider('malformedChunks')]
+    public function testRefusesAMalformedChunkedBody(string $raw): void
+    {
+        $server = $this->http(['/a' => ['raw' => $raw]]);
+
+        $this->expectException(DownloadException::class);
+        $this->expectExceptionMessage('malformed chunk');
+        $this->downloader()->toString($server->url('/a'));
+    }
+
+    public function testReadsUpperCaseChunkSizesAndIgnoresTrailers(): void
+    {
+        $body = str_repeat('y', 300);
+        $server = $this->http(['/a' => ['raw' => "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n12C\r\n{$body}\r\n0\r\nX-Trailer: t\r\n\r\n"]]);
+
+        self::assertSame($body, $this->downloader()->toString($server->url('/a')));
+    }
+
+    #[RequiresPhpExtension('openssl')]
+    public function testRefusesATrustedCertificateForAnotherName(): void
+    {
+        $server = $this->served[] = Served::https($this->tempDir(), ['/a' => ['body' => 'x']], Served::WRONG_NAME_CERT);
+        $downloader = new Downloader([], 10.0, 5.0, 5, realpath(Served::BOTH_CA) ?: Served::BOTH_CA);
+
+        $this->expectException(DownloadException::class);
+        $this->expectExceptionMessage('Couldn\'t set up TLS');
+        $downloader->toString($server->url('/a'));
+    }
+
+    #[RequiresPhpExtension('openssl')]
+    public function testRefusesATrustedCertificateForAnotherNameThroughTheProxy(): void
+    {
+        $proxy = $this->proxy();
+        $server = $this->served[] = Served::https($this->tempDir(), ['/a' => ['body' => 'x']], Served::WRONG_NAME_CERT);
+        $downloader = new Downloader(['https_proxy' => $proxy->url()], 10.0, 5.0, 5, realpath(Served::BOTH_CA) ?: Served::BOTH_CA);
+
+        try {
+            $downloader->toString($server->url('/a'));
+            self::fail('Expected a refusal');
+        } catch (DownloadException $e) {
+            self::assertStringContainsString('Couldn\'t set up TLS', $e->getMessage());
+        }
+        self::assertSame('CONNECT', $proxy->log()[0]['method']);
+    }
+
+    /**
+     * The proxy takes most of the deadline to answer, then the server never
+     * says anything to the TLS client: the handshake must stop at the
+     * deadline, not a fresh timeout's worth later.
+     */
+    #[RequiresPhpExtension('openssl')]
+    public function testATlsHandshakeAfterASlowProxyStillStopsAtTheDeadline(): void
+    {
+        $proxy = $this->served[] = Served::proxy($this->tempDir(), null, 1.0);
+        $silent = $this->http();
+        $started = microtime(true);
+
+        try {
+            $this->downloader(['https_proxy' => $proxy->url()], 2.5, 10.0)->toString('https://127.0.0.1:' . $silent->port() . '/a');
+            self::fail('Expected a timeout');
+        } catch (DownloadException $e) {
+            self::assertStringContainsString('Timed out', $e->getMessage());
+        }
+        $took = microtime(true) - $started;
+        // Past the proxy's second, so the tunnel opened and the wait was in TLS.
+        self::assertGreaterThan(2.0, $took);
+        self::assertLessThan(4.0, $took);
     }
 
     public function testA404FailsWithTheUrlAndLeavesNoFile(): void
@@ -97,18 +206,94 @@ final class DownloaderTest extends TestCase
         self::assertFileDoesNotExist($target);
     }
 
-    public function testAStalledServerFailsWithinTheDeadline(): void
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function slowServers(): iterable
     {
-        $server = $this->http(['/slow' => ['stall' => true]]);
+        yield 'sends nothing' => [['stall' => true]];
+        yield 'sends its headers a line at a time' => [['drip' => 'head']];
+        yield 'sends its body a byte at a time' => [['body' => str_repeat('x', 100), 'drip' => 'body']];
+    }
+
+    /**
+     * The read timeout here is longer than the deadline, so only the deadline
+     * can end these.
+     *
+     * @param array<string, mixed> $route
+     */
+    #[DataProvider('slowServers')]
+    public function testASlowServerFailsAtTheDeadline(array $route): void
+    {
+        $server = $this->http(['/slow' => $route]);
         $started = microtime(true);
 
         try {
-            $this->downloader([], 2.0, 1.0)->toString($server->url('/slow'));
+            $this->downloader([], 1.5, 10.0)->toString($server->url('/slow'));
             self::fail('Expected a timeout');
         } catch (DownloadException $e) {
+            self::assertStringContainsString('Timed out', $e->getMessage());
             self::assertStringContainsString('/slow', $e->getMessage());
         }
-        self::assertLessThan(5.0, microtime(true) - $started);
+        self::assertLessThan(4.0, microtime(true) - $started);
+    }
+
+    #[RequiresPhpExtension('openssl')]
+    public function testASlowHttpsServerFailsAtTheDeadline(): void
+    {
+        $server = $this->https(['/slow' => ['drip' => 'head']]);
+        $started = microtime(true);
+
+        try {
+            $this->downloader([], 1.5, 10.0)->toString($server->url('/slow'));
+            self::fail('Expected a timeout');
+        } catch (DownloadException $e) {
+            self::assertStringContainsString('Timed out', $e->getMessage());
+        }
+        self::assertLessThan(4.0, microtime(true) - $started);
+    }
+
+    public function testReadsAChunkedBody(): void
+    {
+        $data = random_bytes(5500);
+        $source = $this->tempDir() . '/source.bin';
+        file_put_contents($source, $data);
+        $server = $this->http(['/a' => ['file' => $source, 'chunked' => true, 'continue' => true]]);
+
+        self::assertSame($data, $this->downloader()->toString($server->url('/a')));
+    }
+
+    public function testAChunkedBodyCutShortFails(): void
+    {
+        $server = $this->http(['/a' => ['body' => str_repeat('x', 5000), 'chunked' => true, 'truncate' => 2500]]);
+        $target = $this->tempDir() . '/a';
+
+        try {
+            $this->downloader()->toFile($server->url('/a'), $target);
+            self::fail('Expected a failure');
+        } catch (DownloadException $e) {
+            self::assertStringContainsString('stopped before the end', $e->getMessage());
+        }
+        self::assertFileDoesNotExist($target);
+    }
+
+    public function testAStringLargerThanExpectedFails(): void
+    {
+        $server = $this->http(['/sums' => ['body' => str_repeat('x', 2000)]]);
+
+        $this->expectException(DownloadException::class);
+        $this->expectExceptionMessage('larger than the 1000 bytes expected');
+        $this->downloader()->toString($server->url('/sums'), 1000);
+    }
+
+    public function testHttpsWithoutOpensslNamesTheExtension(): void
+    {
+        $downloader = $this->downloader();
+        (function (): void {
+            $this->extensionLoaded = static fn (string $name): bool => $name !== 'openssl';
+        })->call($downloader);
+
+        $this->expectException(DownloadException::class);
+        $this->expectExceptionMessage('needs the openssl extension');
+        $downloader->toString('https://127.0.0.1:1/a');
     }
 
     public function testAStallPartWayThroughTheBodyFailsOnTheReadTimeout(): void
@@ -203,6 +388,7 @@ final class DownloaderTest extends TestCase
         $server = $this->https(['/a' => ['body' => 'over tls']]);
 
         $this->expectException(DownloadException::class);
+        $this->expectExceptionMessage('Couldn\'t set up TLS');
         (new Downloader([], 10.0, 5.0))->toString($server->url('/a'));
     }
 
@@ -246,26 +432,41 @@ final class DownloaderTest extends TestCase
         } catch (DownloadException $e) {
             self::assertStringNotContainsString('s3cret', $e->getMessage());
             self::assertStringNotContainsString('mirror-user', $e->getMessage());
+            self::assertStringContainsString('https://***@127.0.0.1:' . $server->port() . '/a', $e->getMessage());
         }
     }
 
-    public function testGoesThroughTheHttpProxy(): void
-    {
-        $proxy = $this->proxy();
-        $server = $this->http(['/a' => ['body' => 'proxied']]);
-
-        $env = ['http_proxy' => $proxy->url()];
-        self::assertSame('proxied', $this->downloader($env)->toString($server->url('/a')));
-
-        self::assertSame($server->url('/a'), $proxy->log()[0]['target']);
-    }
-
-    public function testNoProxyGoesDirect(): void
+    public function testALoopbackHttpMirrorIgnoresHttpProxy(): void
     {
         $proxy = $this->proxy();
         $server = $this->http(['/a' => ['body' => 'direct']]);
 
-        $env = ['http_proxy' => $proxy->url(), 'no_proxy' => '127.0.0.1'];
+        $env = ['http_proxy' => $proxy->url(), 'HTTP_PROXY' => $proxy->url()];
+        self::assertSame('direct', $this->downloader($env)->toString($server->url('/a')));
+
+        self::assertSame([], $proxy->log());
+    }
+
+    #[RequiresPhpExtension('openssl')]
+    public function testGoesThroughTheHttpsProxy(): void
+    {
+        $proxy = $this->proxy();
+        $server = $this->https(['/a' => ['body' => 'tunnelled']]);
+
+        $env = ['https_proxy' => $proxy->url()];
+        self::assertSame('tunnelled', $this->downloader($env)->toString($server->url('/a')));
+
+        self::assertSame('CONNECT', $proxy->log()[0]['method']);
+        self::assertSame('127.0.0.1:' . $server->port(), $proxy->log()[0]['target']);
+    }
+
+    #[RequiresPhpExtension('openssl')]
+    public function testNoProxyGoesDirect(): void
+    {
+        $proxy = $this->proxy();
+        $server = $this->https(['/a' => ['body' => 'direct']]);
+
+        $env = ['https_proxy' => $proxy->url(), 'no_proxy' => '127.0.0.1'];
         self::assertSame('direct', $this->downloader($env)->toString($server->url('/a')));
 
         self::assertSame([], $proxy->log());
@@ -298,7 +499,10 @@ final class DownloaderTest extends TestCase
             self::fail('Expected a failure');
         } catch (DownloadException $e) {
             self::assertStringNotContainsString('wrong', $e->getMessage());
+            self::assertStringContainsString('HTTP 407', $e->getMessage());
         }
+        self::assertCount(1, $proxy->log());
+        self::assertSame('CONNECT', $proxy->log()[0]['method']);
         self::assertSame([], $server->log());
     }
 

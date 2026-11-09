@@ -9,6 +9,9 @@
         <testsuite name="unit">
             <directory>tests/Unit</directory>
         </testsuite>
+        <testsuite name="release">
+            <directory>tests/Release</directory>
+        </testsuite>
         <testsuite name="launcher">
             <directory>tests/Launcher</directory>
         </testsuite>

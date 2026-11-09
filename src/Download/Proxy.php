@@ -7,11 +7,13 @@ namespace Dynoxide\Download;
 use Dynoxide\Exception\DownloadException;
 
 /**
- * The proxy, if any, for one request, from the usual environment variables.
+ * The proxy, if any, for one https request, from the usual environment
+ * variables.
  *
  * Lower-case names win over upper-case ones, as in Composer and curl. Each hop
  * of a redirect is looked up afresh, so a redirect to a host in no_proxy goes
- * direct.
+ * direct. http_proxy is never used: plain http only ever goes to this machine,
+ * which a proxy can't reach on our behalf.
  */
 final class Proxy
 {
@@ -27,9 +29,7 @@ final class Proxy
      */
     public static function forUrl(array $env, string $scheme, string $host, int $port): ?self
     {
-        $proxy = $scheme === 'https'
-            ? self::first($env, 'https_proxy', 'HTTPS_PROXY')
-            : self::first($env, 'http_proxy', 'HTTP_PROXY');
+        $proxy = $scheme === 'https' ? self::first($env, 'https_proxy', 'HTTPS_PROXY') : null;
         if ($proxy === null) {
             return null;
         }
@@ -45,8 +45,8 @@ final class Proxy
     public static function parse(string $proxy): self
     {
         $url = str_contains($proxy, '://') ? $proxy : 'http://' . $proxy;
-        $parts = parse_url($url);
-        if ($parts === false || !isset($parts['host'])) {
+        $parts = Url::parse($url, 'a proxy URL');
+        if (!isset($parts['host'])) {
             throw new DownloadException('The proxy setting isn\'t a URL: ' . Url::redact($url));
         }
         if (strtolower($parts['scheme'] ?? '') !== 'http') {
@@ -58,7 +58,7 @@ final class Proxy
 
         $authorization = null;
         if (isset($parts['user'])) {
-            $credentials = rawurldecode($parts['user']) . ':' . rawurldecode($parts['pass'] ?? '');
+            $credentials = rawurldecode((string) $parts['user']) . ':' . rawurldecode((string) ($parts['pass'] ?? ''));
             $authorization = 'Basic ' . base64_encode($credentials);
         }
         $port = $parts['port'] ?? 80;

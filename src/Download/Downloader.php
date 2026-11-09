@@ -4,20 +4,24 @@ declare(strict_types=1);
 
 namespace Dynoxide\Download;
 
+use Dynoxide\Exception\CacheException;
 use Dynoxide\Exception\DownloadException;
 
 /**
- * Fetches release files over PHP's own HTTP streams, so no curl extension is
- * needed.
+ * Fetches release files over plain sockets, so no curl extension is needed
+ * and every step, from connecting to the last byte, counts against one
+ * deadline. PHP's http:// stream wrapper only times out each read, so a server
+ * that sends its headers a byte at a time could hold it for ever.
  *
- * Redirects are followed here, one hop at a time, rather than by PHP: PHP
- * reuses the first hop's proxy settings for every hop, and GitHub sends each
- * download to a different host. Each hop gets the URL rules, the proxy and
- * no_proxy afresh, and may not go from https to http.
+ * Redirects are followed one hop at a time. Each hop gets the URL rules, the
+ * proxy and no_proxy afresh, and may not go from https to http.
  */
 final class Downloader
 {
     private const USER_AGENT = 'dynoxide-php';
+
+    /** Whether an extension is loaded; replaceable so tests can take one away. */
+    private \Closure $extensionLoaded;
 
     /**
      * @param array<string, string> $env proxy settings are read from here
@@ -30,6 +34,7 @@ final class Downloader
         private readonly int $maxRedirects = 5,
         private readonly ?string $caFile = null,
     ) {
+        $this->extensionLoaded = extension_loaded(...);
     }
 
     /**
@@ -41,17 +46,17 @@ final class Downloader
         error_clear_last();
         $out = @fopen($path, 'xb');
         if ($out === false) {
-            throw new DownloadException("Couldn't create {$path} to download into: " . self::lastError());
+            throw new CacheException("Couldn't create {$path} to download into: " . self::lastError());
         }
 
         try {
             $this->fetch($url, static function (string $chunk) use ($out, $path): void {
                 if (fwrite($out, $chunk) !== strlen($chunk)) {
-                    throw new DownloadException("Couldn't write to {$path}; is the disk full?");
+                    throw new CacheException("Couldn't write to {$path}; is the disk full?");
                 }
             });
             if (!fclose($out)) {
-                throw new DownloadException("Couldn't write to {$path}; is the disk full?");
+                throw new CacheException("Couldn't write to {$path}; is the disk full?");
             }
         } catch (\Throwable $e) {
             if (is_resource($out)) {
@@ -80,58 +85,49 @@ final class Downloader
      */
     private function fetch(string $url, \Closure $sink): void
     {
-        if (!filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN)) {
-            throw new DownloadException(
-                'Downloading Dynoxide needs allow_url_fopen, which is off in php.ini. Turn it on, '
-                . 'or download the binary yourself and point DYNOXIDE_BINARY at it.',
-            );
-        }
-
         $deadline = microtime(true) + $this->deadlineSeconds;
         $origin = Url::check($url);
         $current = $url;
 
         for ($hop = 0; ; $hop++) {
-            $parts = Url::check($current);
+            $parts = Url::check($current, configured: $hop === 0);
             if ($hop > 0 && $origin['scheme'] === 'https' && $parts['scheme'] !== 'https') {
                 throw new DownloadException(
                     'Refusing a redirect from https to ' . Url::redact($current) . ' while downloading ' . Url::redact($url) . '.',
                 );
             }
-            if ($parts['scheme'] === 'https' && !extension_loaded('openssl')) {
+            if ($parts['scheme'] === 'https' && !($this->extensionLoaded)('openssl')) {
                 throw new DownloadException(
-                    'Downloading Dynoxide over https needs the openssl extension. Enable it in php.ini, '
-                    . 'or download the binary yourself and point DYNOXIDE_BINARY at it.',
+                    'Downloading Dynoxide over https needs the openssl extension. Enable it in php.ini.',
                 );
             }
 
             // Credentials in the URL go only to the host they were written for.
             $sameOrigin = $parts['scheme'] === $origin['scheme'] && $parts['host'] === $origin['host']
                 && $parts['port'] === $origin['port'];
-            $user = $sameOrigin ? $origin['user'] : null;
-            $pass = $sameOrigin ? $origin['pass'] : null;
+            $credentials = $sameOrigin && $origin['user'] !== null ? $origin['user'] . ':' . ($origin['pass'] ?? '') : null;
 
-            [$stream, $status, $headers] = $this->open($current, $parts, $user, $pass, $deadline);
-
-            if ($status >= 300 && $status < 400 && isset($headers['location'])) {
-                fclose($stream);
-                if ($hop >= $this->maxRedirects) {
-                    throw new DownloadException('Too many redirects while downloading ' . Url::redact($url) . '.');
-                }
-                $current = Url::resolve($current, $headers['location']);
-                continue;
-            }
-
+            $response = new Response($this->connect($current, $parts, $deadline), $deadline, $this->readTimeoutSeconds, $current);
             try {
+                $response->write(self::request($current, $parts, $credentials));
+                [$status, $headers] = $response->head();
+
+                if ($status >= 300 && $status < 400 && isset($headers['location'])) {
+                    if ($hop >= $this->maxRedirects) {
+                        throw new DownloadException('Too many redirects while downloading ' . Url::redact($url) . '.');
+                    }
+                    $current = Url::resolve($current, $headers['location']);
+                    continue;
+                }
                 if ($status !== 200) {
                     throw new DownloadException(
-                        "Downloading " . Url::redact($url) . " failed with HTTP {$status}"
+                        'Downloading ' . Url::redact($url) . " failed with HTTP {$status}"
                         . ($current === $url ? '' : ' from ' . Url::redact($current)) . '.',
                     );
                 }
-                $this->read($stream, $sink, $deadline, $url, $headers['content-length'] ?? null);
+                $response->body($headers, $sink);
             } finally {
-                fclose($stream);
+                $response->close();
             }
 
             return;
@@ -139,127 +135,113 @@ final class Downloader
     }
 
     /**
+     * Opens the connection for one hop: straight to the host, or a tunnel
+     * through the proxy, with TLS on top for https.
+     *
      * @param array{scheme: string, host: string, port: int, user: ?string, pass: ?string} $parts
-     * @return array{resource, int, array<string, string>}
+     * @return resource
      */
-    private function open(string $url, array $parts, ?string $user, ?string $pass, float $deadline): array
+    private function connect(string $url, array $parts, float $deadline)
     {
-        $headers = ['User-Agent: ' . self::USER_AGENT, 'Connection: close'];
-        if ($user !== null) {
-            $headers[] = 'Authorization: Basic ' . base64_encode($user . ':' . ($pass ?? ''));
-        }
-
-        $http = [
-            'method' => 'GET',
-            'follow_location' => 0,
-            'ignore_errors' => true,
-            'timeout' => $this->timeout($deadline, $url),
-        ];
-
         $proxy = Proxy::forUrl($this->env, $parts['scheme'], $parts['host'], $parts['port']);
-        if ($proxy !== null) {
-            $http['proxy'] = $proxy->address;
-            // A plain http request goes to the proxy whole; https is tunnelled
-            // with CONNECT, and PHP sends Proxy-Authorization only on the CONNECT.
-            $http['request_fulluri'] = $parts['scheme'] === 'http';
-            if ($proxy->authorization !== null) {
-                $headers[] = 'Proxy-Authorization: ' . $proxy->authorization;
-            }
-        }
-        $http['header'] = $headers;
+        $address = $proxy?->address ?? "tcp://{$parts['host']}:{$parts['port']}";
+        $via = $proxy === null ? '' : ' via the proxy ' . $proxy->shown();
 
-        $ssl = ['verify_peer' => true, 'verify_peer_name' => true];
+        $ssl = ['verify_peer' => true, 'verify_peer_name' => true, 'peer_name' => trim($parts['host'], '[]'), 'SNI_enabled' => true];
         if ($this->caFile !== null) {
             $ssl['cafile'] = $this->caFile;
         }
+        $context = stream_context_create(['ssl' => $ssl]);
 
-        $context = stream_context_create(['http' => $http, 'ssl' => $ssl]);
-        // PHP would send credentials in the URL itself, to whichever host it
-        // names; the Authorization header above is the only way they go out.
         error_clear_last();
-        $stream = @fopen(Url::redact($url), 'rb', false, $context);
-        if ($stream === false) {
-            $via = $proxy === null ? '' : ' via the proxy ' . $proxy->shown();
+        $timeout = Response::remaining($deadline, $this->readTimeoutSeconds, $url);
+        $socket = @stream_socket_client($address, $errno, $errstr, $timeout, STREAM_CLIENT_CONNECT, $context);
+        if ($socket === false) {
             throw new DownloadException(
-                'Couldn\'t download ' . Url::redact($url) . $via . ': ' . self::lastError() . '.',
+                'Couldn\'t connect to download ' . Url::redact($url) . $via . ': '
+                . ($errstr !== '' ? $errstr : self::lastError()) . '.',
             );
         }
 
-        $meta = stream_get_meta_data($stream);
-        [$status, $responseHeaders] = self::parseHeaders(is_array($meta['wrapper_data'] ?? null) ? $meta['wrapper_data'] : []);
-        if ($status === null) {
-            fclose($stream);
-            throw new DownloadException('No HTTP response from ' . Url::redact($url) . '.');
+        try {
+            if ($proxy !== null) {
+                $authority = "{$parts['host']}:{$parts['port']}";
+                $tunnel = new Response($socket, $deadline, $this->readTimeoutSeconds, $url);
+                $tunnel->write(
+                    "CONNECT {$authority} HTTP/1.1\r\nHost: {$authority}\r\nUser-Agent: " . self::USER_AGENT . "\r\n"
+                    . ($proxy->authorization === null ? '' : "Proxy-Authorization: {$proxy->authorization}\r\n")
+                    . "\r\n",
+                );
+                [$status] = $tunnel->head();
+                if ($status !== 200) {
+                    throw new DownloadException(
+                        "The proxy {$proxy->shown()} wouldn't open a tunnel to {$parts['host']} (HTTP {$status})"
+                        . ($status === 407 ? '; check the user name and password in https_proxy' : '') . '.',
+                    );
+                }
+            }
+
+            if ($parts['scheme'] === 'https') {
+                $this->handshake($socket, $deadline, $url, $parts['host'], $via);
+            }
+        } catch (\Throwable $e) {
+            fclose($socket);
+            throw $e;
         }
 
-        return [$stream, $status, $responseHeaders];
+        return $socket;
     }
 
     /**
-     * @param resource $stream
-     * @param \Closure(string): void $sink
-     */
-    private function read($stream, \Closure $sink, float $deadline, string $url, ?string $contentLength): void
-    {
-        $received = 0;
-        while (!feof($stream)) {
-            $timeout = $this->timeout($deadline, $url);
-            stream_set_timeout($stream, (int) $timeout, (int) (fmod($timeout, 1.0) * 1e6));
-            error_clear_last();
-            $chunk = @fread($stream, 65536);
-            if (stream_get_meta_data($stream)['timed_out']) {
-                throw new DownloadException('Timed out downloading ' . Url::redact($url) . '.');
-            }
-            if ($chunk === false) {
-                throw new DownloadException('Reading ' . Url::redact($url) . ' failed: ' . self::lastError() . '.');
-            }
-            if ($chunk !== '') {
-                $received += strlen($chunk);
-                $sink($chunk);
-            }
-        }
-
-        if ($contentLength !== null && ctype_digit($contentLength) && (int) $contentLength !== $received) {
-            throw new DownloadException(
-                'The download of ' . Url::redact($url) . " stopped after {$received} of {$contentLength} bytes.",
-            );
-        }
-    }
-
-    private function timeout(float $deadline, string $url): float
-    {
-        $left = $deadline - microtime(true);
-        if ($left <= 0) {
-            throw new DownloadException('Timed out downloading ' . Url::redact($url) . '.');
-        }
-
-        return min($this->readTimeoutSeconds, $left);
-    }
-
-    /**
-     * Reads the last response in the header list: when there's a proxy tunnel,
-     * the list can start with the proxy's own reply.
+     * Sets up TLS without blocking, so the handshake waits no longer than the
+     * read timeout or the deadline. A blocking handshake would wait as long as
+     * the timeout given when connecting, however much time has gone since.
      *
-     * @param list<string> $lines
-     * @return array{?int, array<string, string>}
+     * @param resource $socket
      */
-    private static function parseHeaders(array $lines): array
+    private function handshake($socket, float $deadline, string $url, string $host, string $via): void
     {
-        $status = null;
-        $headers = [];
-        foreach ($lines as $line) {
-            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $line, $m) === 1) {
-                $status = (int) $m[1];
-                $headers = [];
-                continue;
+        $idleDeadline = min($deadline, microtime(true) + $this->readTimeoutSeconds);
+        $methods = STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT;
+        stream_set_blocking($socket, false);
+        while (true) {
+            error_clear_last();
+            $done = @stream_socket_enable_crypto($socket, true, $methods);
+            if ($done === true) {
+                break;
             }
-            $colon = strpos($line, ':');
-            if ($colon !== false) {
-                $headers[strtolower(trim(substr($line, 0, $colon)))] = trim(substr($line, $colon + 1));
+            if ($done === false) {
+                throw new DownloadException(
+                    "Couldn't set up TLS with {$host} to download " . Url::redact($url) . $via . ': '
+                    . self::lastError() . '.',
+                );
             }
+            $left = Response::remaining($idleDeadline, PHP_FLOAT_MAX, $url);
+            $read = [$socket];
+            $write = $except = null;
+            @stream_select($read, $write, $except, (int) $left, (int) (fmod($left, 1.0) * 1e6));
         }
+        stream_set_blocking($socket, true);
+    }
 
-        return [$status, $headers];
+    /**
+     * @param array{scheme: string, host: string, port: int, user: ?string, pass: ?string} $parts
+     */
+    private static function request(string $url, array $parts, ?string $credentials): string
+    {
+        $target = parse_url(Url::withoutCredentials($url)) ?: [];
+        $path = ($target['path'] ?? '') === '' ? '/' : $target['path'];
+        $path .= isset($target['query']) ? '?' . $target['query'] : '';
+        $default = $parts['scheme'] === 'https' ? 443 : 80;
+        $host = $parts['host'] . ($parts['port'] === $default ? '' : ':' . $parts['port']);
+
+        return "GET {$path} HTTP/1.1\r\n"
+            . "Host: {$host}\r\n"
+            . 'User-Agent: ' . self::USER_AGENT . "\r\n"
+            . "Accept-Encoding: identity\r\n"
+            . "Connection: close\r\n"
+            . ($credentials === null ? '' : 'Authorization: Basic ' . base64_encode($credentials) . "\r\n")
+            . "\r\n";
     }
 
     private static function lastError(): string

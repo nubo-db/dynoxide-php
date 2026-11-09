@@ -74,6 +74,32 @@ final class CacheDirectory
     }
 
     /**
+     * The path below the root if it exists, checked as prepare() would check
+     * it, or null. Creates nothing, so it works on a read-only cache.
+     */
+    public function find(string ...$segments): ?string
+    {
+        if (!is_dir($this->root)) {
+            return null;
+        }
+        $this->check($this->root);
+
+        $path = $this->root;
+        foreach ($segments as $segment) {
+            $path .= DIRECTORY_SEPARATOR . $segment;
+            if (is_link($path)) {
+                throw $this->refuse($path, 'it\'s a symlink, which the cache doesn\'t follow', "remove {$path}");
+            }
+            if (!is_dir($path)) {
+                return null;
+            }
+            $this->check($path);
+        }
+
+        return $path;
+    }
+
+    /**
      * On Linux and macOS, refuses a path that another user owns or that group
      * or other can write to. Callers refuse symlinks below the root before
      * this, so following one here only ever follows the root.
@@ -128,17 +154,18 @@ final class CacheDirectory
         }
 
         // Without the posix extension, the owner of a file we just made is us.
-        // getmyuid() would be the owner of the script, not the process.
-        $probe = $this->root . DIRECTORY_SEPARATOR . '.owner-' . bin2hex(random_bytes(8));
-        $handle = @fopen($probe, 'x');
-        if ($handle === false) {
-            throw $this->unwritable($this->root);
+        // getmyuid() would be the owner of the script, not the process. The
+        // probe goes in the temp directory so a read-only cache still works.
+        $probe = @tempnam(sys_get_temp_dir(), 'dynoxide-owner-');
+        $owner = $probe === false ? false : @fileowner($probe);
+        if ($probe !== false) {
+            @unlink($probe);
         }
-        fclose($handle);
-        $owner = fileowner($probe);
-        unlink($probe);
         if ($owner === false) {
-            throw $this->unwritable($this->root);
+            throw new CacheException(
+                'Couldn\'t work out which user this process runs as: the posix extension isn\'t loaded and '
+                . 'the temp directory ' . sys_get_temp_dir() . ' isn\'t writable. Enable the posix extension.',
+            );
         }
 
         return $this->uid = $owner;

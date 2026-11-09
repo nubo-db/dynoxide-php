@@ -7,12 +7,16 @@ namespace Dynoxide\Tests\Unit\Cache;
 use Dynoxide\Cache\CacheDirectory;
 use Dynoxide\Cache\Installer;
 use Dynoxide\Download\Downloader;
+use Dynoxide\Exception\ArchiveException;
+use Dynoxide\Exception\CacheException;
 use Dynoxide\Exception\DynoxideException;
 use Dynoxide\Platform;
 use Dynoxide\Release;
 use Dynoxide\Tests\Support\Served;
 use Dynoxide\Tests\Support\TarBuilder;
 use Dynoxide\Tests\Support\TempDir;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 
@@ -37,12 +41,12 @@ final class InstallerTest extends TestCase
      * Serves a release for one target. The archive and sha256sums.txt can be
      * swapped out to make it hostile.
      */
-    private function release(string $version = self::VERSION, string $target = self::TARGET, ?string $archive = null, ?string $sums = null): void
+    private function release(string $version = self::VERSION, string $target = self::TARGET, ?string $archive = null, ?string $sums = null, ?string $binary = null): void
     {
         $platform = Platform::fromTarget($target);
         $dir = $this->tempDir() . '/release-' . $version;
         @mkdir($dir);
-        $this->binary = "binary for {$version} " . random_bytes(3000);
+        $this->binary = $binary ?? "binary for {$version} " . random_bytes(3000);
         $path = "{$dir}/" . $platform->archiveName();
 
         if ($archive !== null) {
@@ -176,6 +180,7 @@ final class InstallerTest extends TestCase
         self::assertSame($this->binary, file_get_contents($path));
     }
 
+    #[Group('unix')]
     public function testRefusesAnInstallOthersCanWriteTo(): void
     {
         if (PHP_OS_FAMILY === 'Windows') {
@@ -190,6 +195,7 @@ final class InstallerTest extends TestCase
         $this->installer()->install();
     }
 
+    #[Group('unix')]
     public function testDoesNotFollowASymlinkedInstall(): void
     {
         if (PHP_OS_FAMILY === 'Windows') {
@@ -255,16 +261,21 @@ final class InstallerTest extends TestCase
             self::fail('Expected a failure');
         } catch (DynoxideException $e) {
             self::assertStringContainsString('binary inside', $e->getMessage());
+            self::assertStringContainsString("got {$this->binaryHash}", $e->getMessage());
+            self::assertStringContainsString('DYNOXIDE_DOWNLOAD_BASE_URL', $e->getMessage());
         }
         self::assertSame([], $this->leftovers());
     }
 
     public function testAHostileArchiveLeavesNothingBehind(): void
     {
-        $hostile = gzencode((new TarBuilder())->add('dynoxide', 'bin')->add('../escape', 'x')->tar());
-        $this->release(archive: $hostile);
+        // The binary in it is the right one, so only the archive reader can refuse it.
+        $binary = 'the real binary ' . random_bytes(100);
+        $hostile = (string) gzencode((new TarBuilder())->add('dynoxide', $binary)->add('../escape', 'x')->tar());
+        $this->release(archive: $hostile, binary: $binary);
 
-        $this->expectException(DynoxideException::class);
+        $this->expectException(ArchiveException::class);
+        $this->expectExceptionMessage('more than one member');
         try {
             $this->installer()->install();
         } finally {
@@ -273,17 +284,34 @@ final class InstallerTest extends TestCase
         }
     }
 
-    public function testAFailedDownloadLeavesNothingBehind(): void
+    public function testAFailedDownloadSaysWhatToTryAndLeavesNothingBehind(): void
     {
         $this->release();
         $this->server?->routes([]);
 
-        $this->expectException(DynoxideException::class);
         try {
             $this->installer()->install();
-        } finally {
-            self::assertSame([], $this->leftovers());
+            self::fail('Expected a failure');
+        } catch (DynoxideException $e) {
+            self::assertStringContainsString('HTTP 404', $e->getMessage());
+            foreach (['https_proxy', 'DYNOXIDE_DOWNLOAD_BASE_URL', 'DYNOXIDE_BINARY'] as $hint) {
+                self::assertStringContainsString($hint, $e->getMessage());
+            }
         }
+        self::assertSame([], $this->leftovers());
+    }
+
+    public function testAMalformedSha256sumsFails(): void
+    {
+        $this->release();
+        $platform = Platform::fromTarget(self::TARGET);
+        $this->release(sums: "{$this->archiveHash}  {$platform->archiveName()}
+not a line
+", binary: $this->binary);
+
+        $this->expectException(DynoxideException::class);
+        $this->expectExceptionMessage("can't be read: not a line");
+        $this->installer()->install();
     }
 
     public function testAnRcAndItsReleaseInstallSeparately(): void
@@ -372,6 +400,7 @@ final class InstallerTest extends TestCase
         $expected = $this->root() . DIRECTORY_SEPARATOR . self::VERSION . DIRECTORY_SEPARATOR . self::TARGET
             . DIRECTORY_SEPARATOR . 'dynoxide' . "\n" . $this->binaryHash;
         self::assertSame(array_fill(0, 6, $expected), $results);
+        self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256'], $this->leftovers());
     }
 
     public function testUsesAnotherProcessesInstallThatLandsFirst(): void
@@ -398,6 +427,290 @@ final class InstallerTest extends TestCase
         self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256'], $this->leftovers());
     }
 
+    /** @return iterable<string, array{\Closure(string): string}> */
+    public static function otherChecksumFiles(): iterable
+    {
+        yield 'no newline' => [static fn (string $hash): string => $hash];
+        yield 'upper case with CRLF' => [static fn (string $hash): string => strtoupper($hash) . "\r\n"];
+        yield 'sha256sum format' => [static fn (string $hash): string => "{$hash}  dynoxide\n"];
+    }
+
+    /** @param \Closure(string): string $format */
+    #[DataProvider('otherChecksumFiles')]
+    public function testUsesAGoodInstallWhoseChecksumFileAnotherWrapperWrote(\Closure $format): void
+    {
+        $this->release();
+        $path = $this->installer()->install();
+        file_put_contents(dirname($path) . '/dynoxide.sha256', $format($this->binaryHash));
+
+        self::assertSame($path, $this->installer()->installed());
+        self::assertSame($path, $this->installer()->install());
+        self::assertSame(1, $this->downloads());
+    }
+
+    /** @return iterable<string, array{?string}> */
+    public static function badChecksumFiles(): iterable
+    {
+        yield 'missing' => [null];
+        yield 'empty' => [''];
+        yield 'garbage' => ["not a hash\n"];
+        yield 'another hash' => [str_repeat('a', 64) . "\n"];
+    }
+
+    #[DataProvider('badChecksumFiles')]
+    public function testReinstallsAGoodBinaryWithABadChecksumFile(?string $contents): void
+    {
+        $this->release();
+        $path = $this->installer()->install();
+        $sums = dirname($path) . '/dynoxide.sha256';
+        $contents === null ? unlink($sums) : file_put_contents($sums, $contents);
+
+        self::assertNull($this->installer()->installed());
+        $this->installer()->install();
+
+        self::assertSame($this->binaryHash . "\n", file_get_contents($sums));
+        self::assertSame(2, $this->downloads());
+    }
+
+    #[Group('unix')]
+    public function testReinstallsASymlinkedBinary(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            self::markTestSkipped('symlinks need extra privileges on Windows');
+        }
+        $this->release();
+        $path = $this->installer()->install();
+        $elsewhere = $this->tempDir() . '/elsewhere-binary';
+        rename($path, $elsewhere);
+        symlink($elsewhere, $path);
+
+        self::assertNull($this->installer()->installed());
+        $this->installer()->install();
+
+        self::assertFalse(is_link($path));
+        self::assertSame(2, $this->downloads());
+        self::assertFileExists($elsewhere, 'The symlink target must not be deleted');
+    }
+
+    public function testInstalledChangesNothingOnDisk(): void
+    {
+        $this->release();
+
+        self::assertNull($this->installer()->installed());
+
+        self::assertDirectoryDoesNotExist($this->root());
+    }
+
+    #[Group('unix')]
+    public function testInstalledWorksOnAReadOnlyCache(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            self::markTestSkipped('Windows relies on %LOCALAPPDATA% being per-user');
+        }
+        $this->release();
+        $path = $this->installer()->install();
+        $versionDir = $this->root() . '/' . self::VERSION;
+        chmod($versionDir, 0500);
+        chmod($this->root(), 0500);
+
+        try {
+            self::assertSame($path, $this->installer()->installed());
+        } finally {
+            chmod($this->root(), 0700);
+            chmod($versionDir, 0700);
+        }
+    }
+
+    public function testClearsAwayWhatAKilledInstallLeftBehind(): void
+    {
+        $this->release();
+        $versionDir = $this->root() . '/' . self::VERSION;
+        mkdir($versionDir, 0700, true);
+        $old = ['.tmp-0123456789abcdef', '.tmp-0123456789abcdef-' . Platform::fromTarget(self::TARGET)->archiveName(), '.stale-fedcba9876543210'];
+        mkdir("{$versionDir}/{$old[0]}");
+        file_put_contents("{$versionDir}/{$old[0]}/dynoxide", 'half');
+        file_put_contents("{$versionDir}/{$old[1]}", 'half an archive');
+        mkdir("{$versionDir}/{$old[2]}");
+        foreach ($old as $entry) {
+            touch("{$versionDir}/{$entry}", time() - 7200);
+        }
+        // A recent one may be another install that's still running, and
+        // anything else isn't ours to remove.
+        mkdir("{$versionDir}/.tmp-aaaaaaaaaaaaaaaa");
+        file_put_contents("{$versionDir}/keep-me", 'not ours');
+        touch("{$versionDir}/keep-me", time() - 7200);
+
+        $this->installer()->install();
+
+        self::assertSame(
+            ['.tmp-aaaaaaaaaaaaaaaa', 'keep-me', self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256'],
+            $this->leftovers(),
+        );
+    }
+
+    #[Group('unix')]
+    public function testReplacingALinkedInstallTouchesNothingItPointsAt(): void
+    {
+        $this->release();
+        $versionDir = $this->root() . '/' . self::VERSION;
+        mkdir($versionDir, 0700, true);
+        $outside = $this->tempDir() . '/not-there';
+        symlink($outside, $versionDir . '/' . self::TARGET);
+
+        $this->installer()->install(force: true);
+
+        self::assertFileDoesNotExist($outside);
+        self::assertFalse(is_link($versionDir . '/' . self::TARGET));
+    }
+
+    #[Group('unix')]
+    public function testTheSweepRemovesALinkWithoutFollowingIt(): void
+    {
+        $this->release();
+        $versionDir = $this->root() . '/' . self::VERSION;
+        mkdir($versionDir, 0700, true);
+        $outside = $this->tempDir() . '/outside';
+        mkdir($outside);
+        file_put_contents("{$outside}/precious", 'keep');
+        symlink($outside, "{$versionDir}/.stale-0123456789abcdef");
+        // lstat sees the link's own time; backdate it without touching the target.
+        exec('touch -h -t 202001010000 ' . escapeshellarg("{$versionDir}/.stale-0123456789abcdef"), result_code: $code);
+        self::assertSame(0, $code);
+
+        $this->installer()->install();
+
+        self::assertFalse(is_link("{$versionDir}/.stale-0123456789abcdef"));
+        self::assertSame('keep', file_get_contents("{$outside}/precious"));
+    }
+
+    /** @param \Closure(string, string): bool $rename */
+    private function withRename(Installer $installer, \Closure $rename): Installer
+    {
+        (function () use ($rename): void {
+            $this->rename = $rename;
+            $this->backoffMicroseconds = 1_000;
+        })->call($installer);
+
+        return $installer;
+    }
+
+    public function testRetriesARenameThatFailsForAMoment(): void
+    {
+        // As when a virus scanner on Windows holds the new .exe open.
+        $this->release();
+        $calls = 0;
+        $installer = $this->withRename($this->installer(), static function (string $from, string $to) use (&$calls): bool {
+            return ++$calls > 2 && rename($from, $to);
+        });
+
+        $path = $installer->install();
+
+        self::assertSame(3, $calls);
+        self::assertSame($this->binary, file_get_contents($path));
+        self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256'], $this->leftovers());
+    }
+
+    public function testGivesUpOnARenameThatKeepsFailing(): void
+    {
+        $this->release();
+        $calls = 0;
+        $installer = $this->withRename($this->installer(), static function () use (&$calls): bool {
+            $calls++;
+            trigger_error('rename(a,b): Access is denied', E_USER_WARNING);
+
+            return false;
+        });
+
+        try {
+            @$installer->install();
+            self::fail('Expected a failure');
+        } catch (CacheException $e) {
+            self::assertStringContainsString(self::TARGET, $e->getMessage());
+            self::assertStringContainsString('Access is denied', $e->getMessage());
+            self::assertStringContainsString('DYNOXIDE_CACHE_DIR', $e->getMessage());
+        }
+        self::assertSame(6, $calls);
+        self::assertSame([], $this->leftovers());
+    }
+
+    public function testABadInstallThatCannotBeMovedAsideFails(): void
+    {
+        $this->release();
+        $path = $this->installer()->install();
+        file_put_contents($path, 'corrupted');
+        $installer = $this->withRename($this->installer(), static fn (string $from, string $to): bool => !str_contains($to, '.stale-') && rename($from, $to));
+
+        $this->expectException(CacheException::class);
+        $this->expectExceptionMessage('aside to replace it');
+        $installer->install();
+    }
+
+    public function testPutsBackAGoodInstallThatLandsWhileMovingABadOneAside(): void
+    {
+        $this->release();
+        $path = $this->installer()->install();
+        file_put_contents($path, 'corrupted');
+        $dir = dirname($path);
+        $binary = $this->binary;
+        $hash = $this->binaryHash;
+        // Just before the bad install is moved aside, another process
+        // replaces it with a good one.
+        $installer = $this->withRename($this->installer(), static function (string $from, string $to) use ($dir, $binary, $hash): bool {
+            if ($from === $dir && str_contains($to, '.stale-')) {
+                file_put_contents("{$dir}/dynoxide", $binary);
+                file_put_contents("{$dir}/dynoxide.sha256", $hash . "\n");
+                file_put_contents("{$dir}/marker", 'theirs');
+            }
+
+            return rename($from, $to);
+        });
+
+        $installer->install();
+
+        self::assertSame('theirs', file_get_contents("{$dir}/marker"), 'The other process\'s install should be kept');
+        self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256', self::TARGET . '/marker'], $this->leftovers());
+    }
+
+    public function testAnotherProcessesSweepDoesNotTakeAnInstallBeingPutBack(): void
+    {
+        $this->release();
+        $path = $this->installer()->install();
+        file_put_contents($path, 'corrupted');
+        $dir = dirname($path);
+        $versionDir = dirname($dir);
+        $binary = $this->binary;
+        $hash = $this->binaryHash;
+        $other = $this->installer();
+        $sweeps = 0;
+        $sweep = static function () use ($other, $versionDir, &$sweeps): void {
+            $sweeps++;
+            (function () use ($versionDir): void {
+                $this->sweep($versionDir);
+            })->call($other);
+        };
+        // A good install lands just before ours is moved aside, as in the test
+        // above, and it's an old directory. Another process sweeps just before
+        // it's put back.
+        $installer = $this->withRename($this->installer(), static function (string $from, string $to) use ($dir, $binary, $hash, $sweep): bool {
+            if ($from === $dir && str_contains($to, '.stale-')) {
+                file_put_contents("{$dir}/dynoxide", $binary);
+                file_put_contents("{$dir}/dynoxide.sha256", $hash . "\n");
+                file_put_contents("{$dir}/marker", 'theirs');
+                touch($dir, time() - 7200);
+            }
+            if (str_contains($from, '.stale-')) {
+                $sweep();
+            }
+
+            return rename($from, $to);
+        });
+
+        $installer->install();
+
+        self::assertSame(1, $sweeps, 'The other process should have swept while the install was aside');
+        self::assertSame('theirs', file_get_contents("{$dir}/marker"), 'The other process\'s install should be kept');
+    }
+
     /**
      * Prepares an install that the server moves into place while the
      * installer downloads sha256sums.txt, as a racing process would.
@@ -422,6 +735,5 @@ final class InstallerTest extends TestCase
         ]);
 
         return $staged;
-        self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256'], $this->leftovers());
     }
 }

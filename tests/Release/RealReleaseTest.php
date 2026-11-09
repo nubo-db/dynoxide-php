@@ -2,12 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Dynoxide\Tests\Unit;
+namespace Dynoxide\Tests\Release;
 
 use Dynoxide\Platform;
 use Dynoxide\Release;
 use Dynoxide\Tests\Support\TempDir;
-use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 
 use function Dynoxide\Scripts\UpdateRelease\collect;
@@ -20,7 +19,6 @@ require_once dirname(__DIR__, 2) . '/scripts/update-release.php';
  * `gh release download` writes it). This is the check that the readers cope
  * with the archives the engine actually publishes.
  */
-#[Group('release-assets')]
 final class RealReleaseTest extends TestCase
 {
     use TempDir;

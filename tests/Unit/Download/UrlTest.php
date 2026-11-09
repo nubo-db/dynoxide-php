@@ -51,8 +51,63 @@ final class UrlTest extends TestCase
 
     public function testRedactsCredentials(): void
     {
-        self::assertSame('https://mirror.example.com/x', Url::redact('https://user:s3cret@mirror.example.com/x'));
-        self::assertSame('http://example.com/a@b', Url::redact('http://example.com/a@b'));
+        self::assertSame('https://***@mirror.example.com/x', Url::redact('https://user:s3cret@mirror.example.com/x'));
+        self::assertSame('https://mirror.example.com/x', Url::redact('https://mirror.example.com/x'));
+        self::assertSame('https://example.com/a@b?c=d@e', Url::redact('https://example.com/a@b?c=d@e'));
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function unreadableWithCredentials(): iterable
+    {
+        yield 'no scheme' => ['pat:s3cret@host/x', 's3cret'];
+        yield 'scheme-relative' => ['//pat:s3cret@host/x', 's3cret'];
+        yield 'unparseable' => ['https://pat:s3cret@:99999/x', 's3cret'];
+    }
+
+    #[DataProvider('unreadableWithCredentials')]
+    public function testAnUnreadableUrlNeverShowsThePassword(string $url, string $password): void
+    {
+        try {
+            Url::check($url);
+            self::fail('Expected a refusal');
+        } catch (DownloadException $e) {
+            self::assertStringNotContainsString($password, $e->getMessage());
+            self::assertStringNotContainsString('pat', $e->getMessage());
+        }
+    }
+
+    public function testARedirectTargetMayHaveAnAtSign(): void
+    {
+        foreach (['https://cdn.example/gh/nubo-db/dynoxide@v1.7.0/x', 'https://cdn.example/a?sig=a@b'] as $url) {
+            self::assertSame('cdn.example', Url::check($url, configured: false)['host']);
+        }
+    }
+
+    public function testRequestsWithoutCredentials(): void
+    {
+        self::assertSame('https://mirror.example.com/x', Url::withoutCredentials('https://user:s3cret@mirror.example.com/x'));
+        self::assertSame('http://example.com/a', Url::withoutCredentials('http://example.com/a'));
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function ambiguousPasswords(): iterable
+    {
+        yield 'slash' => ['https://tok:ab/cd@mirror.example/x', 'ab/cd'];
+        yield 'question mark' => ['https://tok:p?w@mirror.example/x', 'p?w'];
+        yield 'hash' => ['https://tok:se#cret@mirror.example/x', 'se#cret'];
+    }
+
+    #[DataProvider('ambiguousPasswords')]
+    public function testRefusesAPasswordThatNeedsEncodingWithoutShowingIt(string $url, string $password): void
+    {
+        try {
+            Url::check($url);
+            self::fail('Expected a refusal');
+        } catch (DownloadException $e) {
+            self::assertStringContainsString('Percent-encode', $e->getMessage());
+            self::assertStringNotContainsString($password, $e->getMessage());
+            self::assertStringNotContainsString('tok', $e->getMessage());
+        }
     }
 
     public function testAMessageNeverShowsThePassword(): void

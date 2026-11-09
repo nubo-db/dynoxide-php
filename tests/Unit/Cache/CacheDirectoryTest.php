@@ -7,6 +7,7 @@ namespace Dynoxide\Tests\Unit\Cache;
 use Dynoxide\Cache\CacheDirectory;
 use Dynoxide\Exception\CacheException;
 use Dynoxide\Tests\Support\TempDir;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 
 final class CacheDirectoryTest extends TestCase
@@ -80,6 +81,7 @@ final class CacheDirectoryTest extends TestCase
         self::assertNotSame($cache->prepare('1.7.0-rc.1'), $cache->prepare('1.7.0'));
     }
 
+    #[Group('unix')]
     public function testAnUnwritableRootNamesThePathAndTheVariable(): void
     {
         $this->skipOnWindows();
@@ -101,6 +103,7 @@ final class CacheDirectoryTest extends TestCase
         self::assertSame($before, $this->tempEntries(), 'Nothing should be written to the system temp directory');
     }
 
+    #[Group('unix')]
     public function testRefusesAGroupWritableDirectory(): void
     {
         $this->skipOnWindows();
@@ -117,6 +120,7 @@ final class CacheDirectoryTest extends TestCase
         }
     }
 
+    #[Group('unix')]
     public function testRefusesAWorldWritableDirectoryBelowTheRoot(): void
     {
         $this->skipOnWindows();
@@ -129,6 +133,7 @@ final class CacheDirectoryTest extends TestCase
         (new CacheDirectory($root))->prepare('1.7.0');
     }
 
+    #[Group('unix')]
     public function testRefusesADirectoryOwnedBySomeoneElse(): void
     {
         $this->skipOnWindows();
@@ -145,6 +150,7 @@ final class CacheDirectoryTest extends TestCase
         }
     }
 
+    #[Group('unix')]
     public function testDoesNotCheckTheParents(): void
     {
         $this->skipOnWindows();
@@ -155,6 +161,7 @@ final class CacheDirectoryTest extends TestCase
         self::assertDirectoryExists((new CacheDirectory("{$parent}/dynoxide"))->prepare('1.7.0'));
     }
 
+    #[Group('unix')]
     public function testFollowsASymlinkedRootButNothingBelowIt(): void
     {
         $this->skipOnWindows();

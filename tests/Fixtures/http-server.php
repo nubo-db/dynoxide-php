@@ -10,7 +10,14 @@ declare(strict_types=1);
 // Prints "PORT <n>" once listening. routes.json is read for every request, so a
 // test can change it while the server runs. Each route is keyed by path:
 //   {"status": 200, "file": "/path", "body": "text", "headers": {"Location": "..."},
-//    "stall": true, "stallAfter": 100, "truncate": 100, "rename": ["/from", "/to"]}
+//    "stall": true, "stallAfter": 100, "truncate": 100, "rename": ["/from", "/to"],
+//    "drip": "head" | "body", "chunked": true, "continue": true, "keepOpen": true,
+//    "raw": "bytes"}
+// "drip" sends a header line or a body byte every 0.2 seconds, so no single read
+// ever waits long. "chunked" sends the body in chunks of 1000 bytes; with
+// "truncate" it stops part-way through. "continue" sends a 100 response first.
+// "keepOpen" holds the connection open after the response. "raw" sends exactly
+// the bytes given, as the whole response.
 // Each request is appended to the log as one JSON line: method, target, headers.
 
 [$_, $routesFile, $logFile] = $argv;
@@ -78,6 +85,13 @@ function serve($conn, string $routesFile, string $logFile): void
         rename($route['rename'][0], $route['rename'][1]);
     }
 
+    if (isset($route['raw'])) {
+        fwrite($conn, (string) $route['raw']);
+        fclose($conn);
+
+        return;
+    }
+
     if (!empty($route['stall'])) {
         sleep(30);
         fclose($conn);
@@ -87,11 +101,47 @@ function serve($conn, string $routesFile, string $logFile): void
 
     $body = isset($route['file']) ? (string) file_get_contents($route['file']) : (string) ($route['body'] ?? '');
     $status = (int) ($route['status'] ?? 200);
+    if (!empty($route['continue'])) {
+        fwrite($conn, "HTTP/1.1 100 Continue\r\n\r\n");
+    }
+
+    if (($route['drip'] ?? null) === 'head') {
+        fwrite($conn, "HTTP/1.1 200 X\r\n");
+        for ($i = 0; $i < 150 && @fwrite($conn, "X-Drip-{$i}: x\r\n") !== false; $i++) {
+            usleep(200_000);
+        }
+        fclose($conn);
+
+        return;
+    }
+
+    if (!empty($route['chunked'])) {
+        $out = "HTTP/1.1 {$status} X\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+        foreach (str_split($body, 1000) as $piece) {
+            $out .= dechex(strlen($piece)) . "; ext=1\r\n{$piece}\r\n";
+        }
+        $out .= "0\r\n\r\n";
+        fwrite($conn, isset($route['truncate']) ? substr($out, 0, (int) $route['truncate']) : $out);
+        fclose($conn);
+
+        return;
+    }
+
     $out = "HTTP/1.1 {$status} X\r\nContent-Length: " . strlen($body) . "\r\nConnection: close\r\n";
     foreach ($route['headers'] ?? [] as $name => $value) {
         $out .= "{$name}: {$value}\r\n";
     }
     $out .= "\r\n";
+
+    if (($route['drip'] ?? null) === 'body') {
+        fwrite($conn, $out);
+        for ($i = 0; $i < strlen($body) && @fwrite($conn, $body[$i]) !== false; $i++) {
+            usleep(200_000);
+        }
+        fclose($conn);
+
+        return;
+    }
     if (isset($route['truncate'])) {
         $body = substr($body, 0, (int) $route['truncate']);
     }
@@ -104,5 +154,8 @@ function serve($conn, string $routesFile, string $logFile): void
         return;
     }
     fwrite($conn, $out . $body);
+    if (!empty($route['keepOpen'])) {
+        sleep(30);
+    }
     fclose($conn);
 }

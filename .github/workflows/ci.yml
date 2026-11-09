@@ -28,7 +28,7 @@ jobs:
           - { leg: macos-arm64-php8.4, os: macos-26, php: '8.4', phpunit: '^13.4' }
           - { leg: macos-x64-php8.4, os: macos-26-intel, php: '8.4', phpunit: '^13.4' }
           - { leg: windows-x64-php8.1, os: windows-2025, php: '8.1', phpunit: '^10.5' }
-          - { leg: windows-x64-php8.4, os: windows-2025, php: '8.4', phpunit: '^13.4' }
+          - { leg: windows-x64-php8.4, os: windows-2025, php: '8.4', phpunit: '^13.4', release-assets: true }
     steps:
       - uses: actions/checkout@v5
 
@@ -44,8 +44,11 @@ jobs:
           composer require --dev --no-update "phpunit/phpunit:${{ matrix.phpunit }}"
           composer update --no-interaction --no-progress --prefer-dist
 
+      # A skipped test fails the leg, so a missing extension can't pass for a
+      # green run. Windows leaves out the tests of Unix permissions.
       - name: Unit tests
-        run: vendor/bin/phpunit --testsuite unit
+        shell: bash
+        run: vendor/bin/phpunit --testsuite unit --fail-on-skipped ${{ runner.os == 'Windows' && '--exclude-group unix' || '' }}
 
       # The embedded hashes against the real release, unpacked with the
       # package's own readers. Skipping counts as failure here.
@@ -57,7 +60,7 @@ jobs:
         run: |
           tag=$(php -r 'require "vendor/autoload.php"; echo Dynoxide\Release::TAG;')
           gh release download "$tag" -R nubo-db/dynoxide -D "$RUNNER_TEMP/assets"
-          DYNOXIDE_RELEASE_ASSETS="$RUNNER_TEMP/assets" vendor/bin/phpunit --testsuite unit --group release-assets --fail-on-skipped
+          DYNOXIDE_RELEASE_ASSETS="$RUNNER_TEMP/assets" vendor/bin/phpunit --testsuite release --fail-on-skipped
 
       - name: Record the leg
         shell: bash
@@ -88,8 +91,13 @@ jobs:
       - name: Install dependencies
         run: php84 /usr/bin/composer.phar update --no-interaction --no-progress --prefer-dist
 
+      # As a user who isn't root, since root can write anywhere and the
+      # permission tests would skip. This leg also has no posix extension.
       - name: Unit tests
-        run: php84 vendor/bin/phpunit --testsuite unit
+        run: |
+          adduser -D tester
+          chown -R tester .
+          su tester -s /bin/sh -c 'php84 vendor/bin/phpunit --testsuite unit --fail-on-skipped'
 
       - name: Record the leg
         run: |

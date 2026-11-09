@@ -18,6 +18,8 @@ namespace Dynoxide\Scripts\UpdateRelease;
 
 use Dynoxide\Archive\TarReader;
 use Dynoxide\Archive\ZipReader;
+use Dynoxide\Download\Sha256Sums;
+use Dynoxide\Exception\DownloadException;
 use Dynoxide\Platform;
 
 const BASE_URL = 'https://github.com/nubo-db/dynoxide/releases/download';
@@ -68,15 +70,10 @@ function parseSums(string $text): array
 {
     $expected = array_map(static fn (string $t): string => Platform::fromTarget($t)->archiveName(), Platform::TARGETS);
 
-    $listed = [];
-    foreach (preg_split('/\r?\n/', trim($text)) ?: [] as $line) {
-        if (preg_match('/^([0-9a-f]{64}) [ *]?(\S+)$/', $line, $m) !== 1) {
-            throw new GeneratorException("sha256sums.txt has a line this script can't read: {$line}");
-        }
-        if (isset($listed[$m[2]])) {
-            throw new GeneratorException("sha256sums.txt lists {$m[2]} twice");
-        }
-        $listed[$m[2]] = $m[1];
+    try {
+        $listed = Sha256Sums::parse($text);
+    } catch (DownloadException $e) {
+        throw new GeneratorException($e->getMessage(), 0, $e);
     }
 
     $missing = array_diff($expected, array_keys($listed));
@@ -157,15 +154,18 @@ function main(array $argv): int
     $tag = null;
     $from = null;
     $out = dirname(__DIR__) . '/src/Release.php';
+    $missingValue = false;
     while ($args !== []) {
         $arg = array_shift($args);
-        match ($arg) {
-            '--from' => $from = array_shift($args),
-            '--out' => $out = array_shift($args),
-            default => $tag = $arg,
-        };
+        if ($arg === '--from' || $arg === '--out') {
+            $value = array_shift($args);
+            $missingValue = $missingValue || $value === null;
+            $arg === '--from' ? $from = $value : $out = $value;
+            continue;
+        }
+        $tag = $arg;
     }
-    if ($tag === null || $out === null) {
+    if ($tag === null || $out === null || $missingValue) {
         fwrite(STDERR, "usage: update-release.php <tag> [--from <dir>] [--out <file>]\n");
 
         return 2;
@@ -197,7 +197,9 @@ function main(array $argv): int
     };
 
     try {
-        file_put_contents($out, render(collect($tag, $fetch, $work)));
+        if (file_put_contents($out, render(collect($tag, $fetch, $work))) === false) {
+            throw new GeneratorException("Couldn't write {$out}");
+        }
         fwrite(STDOUT, "Wrote {$out} for {$tag}\n");
 
         return 0;

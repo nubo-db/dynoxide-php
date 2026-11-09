@@ -25,11 +25,52 @@ final class ProxyTest extends TestCase
         self::assertNull($proxy->authorization);
     }
 
-    public function testUsesHttpProxyForHttp(): void
+    public function testNeverProxiesPlainHttp(): void
     {
-        $proxy = Proxy::forUrl(['https_proxy' => 'http://proxy.corp:3128', 'http_proxy' => 'http://other:1'], 'http', 'localhost', 80);
+        // Plain http only ever goes to this machine, which a proxy can't reach for us.
+        $env = ['https_proxy' => 'http://proxy.corp:3128', 'http_proxy' => 'http://other:1', 'HTTP_PROXY' => 'http://other:2'];
 
-        self::assertSame('tcp://other:1', $proxy?->address);
+        self::assertNull(Proxy::forUrl($env, 'http', '127.0.0.1', 8080));
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function ambiguousPasswords(): iterable
+    {
+        yield 'slash' => ['http://user:pa/ss@proxy:3128', 'pa/ss'];
+        yield 'slash that parses as a port' => ['http://user:12/34@proxy:3128', '12/34'];
+        yield 'question mark' => ['http://user:p?w@proxy:3128', 'p?w'];
+        yield 'hash' => ['http://user:se#cret@proxy:3128', 'se#cret'];
+    }
+
+    #[DataProvider('ambiguousPasswords')]
+    public function testRefusesAPasswordThatNeedsEncodingWithoutShowingIt(string $url, string $password): void
+    {
+        try {
+            Proxy::parse($url);
+            self::fail('Expected a refusal');
+        } catch (DownloadException $e) {
+            self::assertStringContainsString('Percent-encode', $e->getMessage());
+            self::assertStringNotContainsString($password, $e->getMessage());
+            self::assertStringNotContainsString('//user', $e->getMessage());
+        }
+    }
+
+    public function testAnAtSignInThePasswordIsFine(): void
+    {
+        // PHP splits at the last "@", so this one can't be misread.
+        $proxy = Proxy::parse('http://user:a@b@proxy:3128');
+
+        self::assertSame('tcp://proxy:3128', $proxy->address);
+        self::assertSame('http://***@proxy:3128', $proxy->shown());
+    }
+
+    public function testAnEncodedPasswordIsFine(): void
+    {
+        $proxy = Proxy::parse('http://user:pa%2Fss%40x@proxy:3128');
+
+        self::assertSame('tcp://proxy:3128', $proxy->address);
+        self::assertSame('Basic ' . base64_encode('user:pa/ss@x'), $proxy->authorization);
+        self::assertStringNotContainsString('pa', $proxy->shown());
     }
 
     public function testLowerCaseWinsOverUpperCase(): void
