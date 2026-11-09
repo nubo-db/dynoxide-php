@@ -57,7 +57,7 @@ jobs:
         run: |
           tag=$(php -r 'require "vendor/autoload.php"; echo Dynoxide\Release::TAG;')
           gh release download "$tag" -R nubo-db/dynoxide -D "$RUNNER_TEMP/assets"
-          DYNOXIDE_RELEASE_ASSETS="$RUNNER_TEMP/assets" vendor/bin/phpunit --group release-assets --fail-on-skipped
+          DYNOXIDE_RELEASE_ASSETS="$RUNNER_TEMP/assets" vendor/bin/phpunit --testsuite unit --group release-assets --fail-on-skipped
 
       - name: Record the leg
         shell: bash
@@ -79,16 +79,17 @@ jobs:
         run: |
           apk add --no-cache git php84 php84-phar php84-openssl php84-zip php84-mbstring \
             php84-dom php84-xml php84-xmlwriter php84-tokenizer php84-ctype php84-iconv \
-            php84-curl composer
-          ln -sf /usr/bin/php84 /usr/local/bin/php
+            php84-curl php84-zlib composer
+          php84 -v
 
       - uses: actions/checkout@v5
 
+      # Alpine's composer wrapper runs PHP 8.3, so call the phar with 8.4.
       - name: Install dependencies
-        run: composer update --no-interaction --no-progress --prefer-dist
+        run: php84 /usr/bin/composer.phar update --no-interaction --no-progress --prefer-dist
 
       - name: Unit tests
-        run: vendor/bin/phpunit --testsuite unit
+        run: php84 vendor/bin/phpunit --testsuite unit
 
       - name: Record the leg
         run: |
