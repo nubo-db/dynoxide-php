@@ -111,7 +111,10 @@ final class InstallerTest extends TestCase
 
         $path = $this->installer()->install();
 
-        self::assertSame($this->root() . '/1.7.0/' . self::TARGET . '/dynoxide', str_replace('\\', '/', $path));
+        self::assertSame(
+            str_replace('\\', '/', $this->root() . '/1.7.0/' . self::TARGET . '/dynoxide'),
+            str_replace('\\', '/', $path),
+        );
         self::assertSame($this->binary, file_get_contents($path));
         self::assertSame($this->binaryHash . "\n", file_get_contents(dirname($path) . '/dynoxide.sha256'));
         if (PHP_OS_FAMILY !== 'Windows') {
