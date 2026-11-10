@@ -141,7 +141,8 @@ final class HardKillTest extends TestCase
         while (array_filter($workers, self::isRunning(...)) !== [] && microtime(true) < $deadline) {
             usleep(50_000);
         }
-        self::assertSame([], array_values(array_filter($workers, self::isRunning(...))), 'every worker exited');
+        $left = array_values(array_filter($workers, self::isRunning(...)));
+        self::assertSame([], $left, 'every worker exited: ' . implode('; ', array_map(self::describe(...), $left)));
         self::assertCount(count($lines), file($report, FILE_SKIP_EMPTY_LINES) ?: [], 'no worker started another test');
     }
 
@@ -320,13 +321,30 @@ final class HardKillTest extends TestCase
         return array_values(array_unique($pids));
     }
 
+    /** What's known about a process, for a failure message. */
+    private static function describe(int $pid): string
+    {
+        if (PHP_OS_FAMILY !== 'Linux') {
+            return (string) $pid;
+        }
+        $stat = (string) @file_get_contents("/proc/{$pid}/stat");
+        $cmd = str_replace("\0", ' ', (string) @file_get_contents("/proc/{$pid}/cmdline"));
+        $wchan = (string) @file_get_contents("/proc/{$pid}/wchan");
+
+        return "{$pid} [{$cmd}] state " . (preg_match('/\) (\S) /', $stat, $m) === 1 ? $m[1] : '?') . " waiting in {$wchan}";
+    }
+
     private static function isRunning(int $pid): bool
     {
         if (PHP_OS_FAMILY === 'Windows') {
             return str_contains(self::command(['tasklist', '/FI', "PID eq {$pid}", '/NH']), " {$pid} ");
         }
         if (PHP_OS_FAMILY === 'Linux') {
-            return is_dir("/proc/{$pid}") && !str_contains((string) @file_get_contents("/proc/{$pid}/stat"), ') Z ');
+            // Read rather than is_dir(), whose answer PHP caches. A zombie
+            // has exited and only waits for its parent to collect it.
+            $stat = @file_get_contents("/proc/{$pid}/stat");
+
+            return $stat !== false && !str_contains($stat, ') Z ');
         }
 
         return self::command(['sh', '-c', 'kill -0 "$1" 2>/dev/null && echo yes', 'sh', (string) $pid]) === "yes\n";
