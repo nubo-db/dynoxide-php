@@ -35,7 +35,8 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: zlib, zip, openssl
+          # Windows has no pcntl; elsewhere the fork test needs it.
+          extensions: ${{ startsWith(matrix.os, 'windows') && 'zlib, zip, openssl' || 'zlib, zip, openssl, pcntl' }}
           coverage: none
 
       - name: Install dependencies
@@ -49,6 +50,15 @@ jobs:
       - name: Unit tests
         shell: bash
         run: vendor/bin/phpunit --testsuite unit --fail-on-skipped ${{ runner.os == 'Windows' && '--exclude-group unix' || '' }}
+
+      # Downloads the release this package embeds and starts it, with no
+      # options, on every platform. Skipping counts as failure here too.
+      - name: Embedded release starts
+        shell: bash
+        env:
+          DYNOXIDE_TEST_DOWNLOAD: '1'
+          DYNOXIDE_CACHE_DIR: ${{ runner.temp }}/dynoxide-cache
+        run: vendor/bin/phpunit --testsuite launcher --filter testStartsTheEmbeddedReleaseWithNoOptions --fail-on-skipped
 
       # The embedded hashes against the real release, unpacked with the
       # package's own readers. Skipping counts as failure here.
@@ -82,7 +92,7 @@ jobs:
         run: |
           apk add --no-cache git php84 php84-phar php84-openssl php84-zip php84-mbstring \
             php84-dom php84-xml php84-xmlwriter php84-tokenizer php84-ctype php84-iconv \
-            php84-curl php84-zlib composer
+            php84-curl php84-zlib php84-pcntl composer
           php84 -v
 
       - uses: actions/checkout@v5
@@ -98,6 +108,10 @@ jobs:
           adduser -D tester
           chown -R tester .
           su tester -s /bin/sh -c 'php84 vendor/bin/phpunit --testsuite unit --fail-on-skipped'
+
+      - name: Embedded release starts
+        run: |
+          su tester -s /bin/sh -c 'DYNOXIDE_TEST_DOWNLOAD=1 DYNOXIDE_CACHE_DIR=/tmp/dynoxide-cache php84 vendor/bin/phpunit --testsuite launcher --filter testStartsTheEmbeddedReleaseWithNoOptions --fail-on-skipped'
 
       - name: Record the leg
         run: |
