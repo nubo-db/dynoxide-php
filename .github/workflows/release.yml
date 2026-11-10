@@ -1,0 +1,65 @@
+name: Release check
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Release check {0} at {1}', inputs.tag, inputs.sha) || format('Release check {0} (pushed)', github.ref_name) }}
+
+# Run by hand on the exact commit to be tagged, giving that commit and the
+# tag it will get, before the tag is pushed: Packagist publishes a tag the
+# moment it arrives. It runs again when any tag is pushed, as a second look,
+# so a tag spelt some other way still gets checked (and fails). Nothing here
+# publishes anything.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag this commit will get, such as v1.7.0-rc.1
+        required: true
+      sha:
+        description: The full SHA of the commit that will be tagged
+        required: true
+  push:
+    tags: ['*']
+
+permissions:
+  contents: read
+
+jobs:
+  # The tag matches src/Release.php, the README states that version, and the
+  # version has the launcher flags.
+  consistency:
+    name: tag and versions agree
+    runs-on: ubuntu-24.04
+    steps:
+      - name: The commit tested is the one to be tagged
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED: ${{ inputs.sha }}
+          ACTUAL: ${{ github.sha }}
+        run: |
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::This run tests $ACTUAL, not $EXPECTED. Run it on the commit that will be tagged, and give its full SHA."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: Release gate
+        env:
+          DYNOXIDE_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: vendor/bin/phpunit --testsuite release --group release-gate --fail-on-skipped --fail-on-empty-test-suite
+
+  # Every leg again, with the embedded hashes checked against the release's
+  # assets and the launcher suite run on the release's own binaries. No
+  # secrets are passed: release mode doesn't need the staging token, and
+  # without it a run that lost release: true fails rather than quietly
+  # testing a staging build.
+  matrix:
+    needs: consistency
+    uses: ./.github/workflows/ci.yml
+    with:
+      release: true

@@ -5,6 +5,18 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Run the launcher tests on the embedded release, as the release check does
+        type: boolean
+        default: false
+  # The release workflow runs the whole matrix again before a tag, with the
+  # launcher tests on the release's own binaries rather than a staging build.
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -74,13 +86,26 @@ jobs:
         run: vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped ${{ matrix.no-pest && '--exclude-group pest' || '' }}
 
       # The rest of the launcher suite against a 1.7.0 build: starting and
-      # stopping, hard kills and persistence. Skipping counts as failure.
+      # stopping, hard kills and persistence. Before a release it's the
+      # release's own binary, installed and verified by bin/dynoxide (the root
+      # package's bin isn't linked into vendor/bin), and checked to be that
+      # version; otherwise a staging build. Skipping counts as failure.
       - name: Launcher tests with the engine build
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.DYNOXIDE_STAGING_TOKEN }}
         run: |
-          binary=$(scripts/fetch-engine-build.sh "$ENGINE_REPO" "$ENGINE_COMMIT" "${{ matrix.target }}" "$RUNNER_TEMP/engine")
+          if [ "${{ inputs.release }}" = true ]; then
+            binary=$(php bin/dynoxide install)
+            expected="dynoxide $(php -r 'require "vendor/autoload.php"; echo Dynoxide\Release::VERSION;')"
+            actual=$("$binary" --version)
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$binary says \"$actual\", not \"$expected\""
+              exit 1
+            fi
+          else
+            binary=$(scripts/fetch-engine-build.sh "$ENGINE_REPO" "$ENGINE_COMMIT" "${{ matrix.target }}" "$RUNNER_TEMP/engine")
+          fi
           DYNOXIDE_TEST_BINARY="$binary" vendor/bin/phpunit --testsuite launcher --exclude-group embedded --fail-on-skipped
 
       # The embedded hashes against the real release, unpacked with the
@@ -93,7 +118,7 @@ jobs:
         run: |
           tag=$(php -r 'require "vendor/autoload.php"; echo Dynoxide\Release::TAG;')
           gh release download "$tag" -R nubo-db/dynoxide -D "$RUNNER_TEMP/assets"
-          DYNOXIDE_RELEASE_ASSETS="$RUNNER_TEMP/assets" vendor/bin/phpunit --testsuite release --fail-on-skipped
+          DYNOXIDE_RELEASE_ASSETS="$RUNNER_TEMP/assets" vendor/bin/phpunit --testsuite release --exclude-group release-gate --fail-on-skipped
 
       - name: Record the leg
         shell: bash
@@ -141,7 +166,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DYNOXIDE_STAGING_TOKEN }}
         run: |
-          binary=$(scripts/fetch-engine-build.sh "$ENGINE_REPO" "$ENGINE_COMMIT" x86_64-unknown-linux-musl /tmp/engine)
+          if [ "${{ inputs.release }}" = true ]; then
+            binary=$(su tester -s /bin/sh -c 'php84 bin/dynoxide install')
+            expected="dynoxide $(php84 -r 'require "vendor/autoload.php"; echo Dynoxide\Release::VERSION;')"
+            actual=$("$binary" --version)
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$binary says \"$actual\", not \"$expected\""
+              exit 1
+            fi
+          else
+            binary=$(scripts/fetch-engine-build.sh "$ENGINE_REPO" "$ENGINE_COMMIT" x86_64-unknown-linux-musl /tmp/engine)
+          fi
           su tester -s /bin/sh -c "DYNOXIDE_TEST_BINARY=$binary php84 vendor/bin/phpunit --testsuite launcher --exclude-group embedded --fail-on-skipped"
 
       - name: Record the leg
