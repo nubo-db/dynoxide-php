@@ -135,7 +135,7 @@ jobs:
 
       - name: Embedded release and the PHPUnit extension
         run: |
-          su tester -s /bin/sh -c 'DYNOXIDE_TEST_DOWNLOAD=1 DYNOXIDE_CACHE_DIR=/tmp/dynoxide-cache php84 vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped'
+          su tester -s /bin/sh -c 'DYNOXIDE_TEST_DOWNLOAD=1 DYNOXIDE_CACHE_DIR=/tmp/dynoxide-cache DYNOXIDE_TEST_COMPOSER="php84 /usr/bin/composer.phar" php84 vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped'
 
       - name: Launcher tests with the engine build
         env:

@@ -1,0 +1,10 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// Composer 2.2 and later tell a vendor binary where its autoloader is. The
+// fallback is for running this file from a checkout of the package itself.
+require $GLOBALS['_composer_autoload_path'] ?? dirname(__DIR__) . '/vendor/autoload.php';
+
+exit((new Dynoxide\Console\InstallCommand())->run(array_values(array_slice($_SERVER['argv'], 1)), STDOUT, STDERR));
