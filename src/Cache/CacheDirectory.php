@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dynoxide\Cache;
 
+use Dynoxide\Environment;
 use Dynoxide\Exception\CacheException;
 
 /**
@@ -31,6 +32,7 @@ final class CacheDirectory
      */
     public static function fromEnvironment(array $env, string $osFamily = PHP_OS_FAMILY): self
     {
+        $env = Environment::normalise($env, $osFamily);
         $set = static fn (string $name): ?string => isset($env[$name]) && $env[$name] !== '' ? $env[$name] : null;
         $separator = $osFamily === 'Windows' ? '\\' : '/';
 

@@ -9,6 +9,7 @@ use Dynoxide\Archive\ZipReader;
 use Dynoxide\Download\Downloader;
 use Dynoxide\Download\Sha256Sums;
 use Dynoxide\Download\Url;
+use Dynoxide\Environment;
 use Dynoxide\Exception\CacheException;
 use Dynoxide\Exception\DownloadException;
 use Dynoxide\Platform;
@@ -45,7 +46,7 @@ final class Installer
         private readonly CacheDirectory $cache,
         private readonly Downloader $downloader,
         private readonly Platform $platform,
-        private readonly string $version,
+        public readonly string $version,
         private readonly string $archiveSha256,
         private readonly string $binarySha256,
         string $baseUrl = self::DEFAULT_BASE_URL,
@@ -63,6 +64,7 @@ final class Installer
     public static function forEmbeddedRelease(array $env, ?Platform $platform = null): self
     {
         $platform ??= Platform::detect();
+        $env = Environment::normalise($env, $platform->isWindows() ? 'Windows' : PHP_OS_FAMILY);
         $base = isset($env['DYNOXIDE_DOWNLOAD_BASE_URL']) && $env['DYNOXIDE_DOWNLOAD_BASE_URL'] !== ''
             ? $env['DYNOXIDE_DOWNLOAD_BASE_URL']
             : self::DEFAULT_BASE_URL;
