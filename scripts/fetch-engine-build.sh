@@ -6,6 +6,14 @@
 set -eu
 repo=$1 commit=$2 target=$3 dir=$4
 
+# GitHub answers 404, not 403, for a repo or workflow the token can't see, so
+# say what to check.
+if ! gh api "repos/$repo/actions/workflows/test-build.yml" --jq .state >/dev/null; then
+  echo "The token can't see the Test Build workflow in $repo. It needs access to that" >&2
+  echo "repository, with the Actions permission set to read." >&2
+  exit 1
+fi
+
 run=$(gh run list -R "$repo" --workflow test-build.yml --status success --limit 50 \
   --json databaseId,headSha -q "[.[] | select(.headSha == \"$commit\")][0].databaseId")
 if [ -z "$run" ] || [ "$run" = "null" ]; then

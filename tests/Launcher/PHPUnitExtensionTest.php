@@ -107,7 +107,7 @@ final class PHPUnitExtensionTest extends TestCase
     {
         [$code, $output, $reports] = $this->runTool('pest', $this->config('pest'), ['--parallel', '--processes=3']);
 
-        self::assertSame(0, $code, $output);
+        self::assertSame(0, $code, $output . "\n" . json_encode($reports, JSON_PRETTY_PRINT));
         self::assertSame(['a', 'b', 'c'], self::labels($reports));
         self::assertWorkersHaveTheirOwnServers($reports);
     }
@@ -275,7 +275,7 @@ final class PHPUnitExtensionTest extends TestCase
         $byToken = [];
         foreach ($reports as $report) {
             self::assertNotSame('', $report['token'], 'ran in a worker');
-            self::assertSame(200, $report['status']);
+            self::assertSame(200, $report['status'], json_encode($report) ?: '');
             $byToken[$report['token']][] = $report['endpoint'];
         }
         self::assertGreaterThanOrEqual(2, count($byToken), 'more than one worker ran tests');

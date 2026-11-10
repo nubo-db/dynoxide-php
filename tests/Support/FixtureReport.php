@@ -11,11 +11,17 @@ namespace Dynoxide\Tests\Support;
  */
 final class FixtureReport
 {
-    /** @return array{label: string, pid: int, token: string, endpoint: string, status: int, tables: list<string>} */
+    /**
+     * Requests get ten seconds, since a first request to a server on a cold
+     * Windows runner can be slow; a refused connection still fails at once.
+     *
+     * @return array{label: string, pid: int, token: string, endpoint: string, status: int, error: string, tables: list<string>}
+     */
     public static function record(string $label, ?string $table = null): array
     {
         $endpoint = (string) getenv('AWS_ENDPOINT_URL_DYNAMODB');
         $status = 0;
+        $error = '';
         $tables = [];
         try {
             if ($table !== null) {
@@ -24,12 +30,13 @@ final class FixtureReport
                     'AttributeDefinitions' => [['AttributeName' => 'id', 'AttributeType' => 'S']],
                     'KeySchema' => [['AttributeName' => 'id', 'KeyType' => 'HASH']],
                     'BillingMode' => 'PAY_PER_REQUEST',
-                ], 2.0);
+                ], 10.0);
             }
-            [$status, $body] = Dynamo::call($endpoint, 'ListTables', [], 2.0);
+            [$status, $body] = Dynamo::call($endpoint, 'ListTables', [], 10.0);
             $tables = $body['TableNames'] ?? [];
-        } catch (\RuntimeException) {
-            // Nothing listening: status stays 0.
+        } catch (\RuntimeException $e) {
+            // Nothing answered: status stays 0, and the reason goes in the report.
+            $error = $e->getMessage();
         }
         $report = [
             'label' => $label,
@@ -37,6 +44,7 @@ final class FixtureReport
             'token' => (string) getenv('TEST_TOKEN'),
             'endpoint' => $endpoint,
             'status' => $status,
+            'error' => $error,
             'tables' => $tables,
         ];
         file_put_contents((string) getenv('FIXTURE_REPORT'), json_encode($report) . "\n", FILE_APPEND | LOCK_EX);
