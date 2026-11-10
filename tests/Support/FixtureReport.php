@@ -40,6 +40,12 @@ final class FixtureReport
             'tables' => $tables,
         ];
         file_put_contents((string) getenv('FIXTURE_REPORT'), json_encode($report) . "\n", FILE_APPEND | LOCK_EX);
+        // For the hard-kill tests: hold the test open so the runner can be
+        // killed while it's inside one.
+        $hold = (float) getenv('FIXTURE_HOLD');
+        if ($hold > 0) {
+            usleep((int) ($hold * 1_000_000));
+        }
 
         return $report;
     }

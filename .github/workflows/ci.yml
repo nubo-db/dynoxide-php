@@ -9,6 +9,15 @@ on:
 permissions:
   contents: read
 
+# The launcher tests need a Dynoxide 1.7.0 build. Until the engine release
+# exists, it comes from the private staging repo's Test Build for this commit
+# of the engine branch, read with DYNOXIDE_STAGING_TOKEN.
+env:
+  ENGINE_REPO: hicksy/dynoxide-staging
+  # Its Test Build ran on 10 November 2026, and the builds expire on
+  # 8 February 2027; run Test Build again before then.
+  ENGINE_COMMIT: 84cc8fe5ff8fb96279d2a8fb001529f6c966fe55
+
 jobs:
   test:
     name: ${{ matrix.leg }}
@@ -18,17 +27,17 @@ jobs:
       matrix:
         include:
           # Every supported PHP version, each with the newest PHPUnit it can run.
-          - { leg: linux-x64-php8.1, os: ubuntu-24.04, php: '8.1', phpunit: '^10.5', no-pest: true }
-          - { leg: linux-x64-php8.2, os: ubuntu-24.04, php: '8.2', phpunit: '^11.5' }
-          - { leg: linux-x64-php8.3, os: ubuntu-24.04, php: '8.3', phpunit: '^12.5' }
-          - { leg: linux-x64-php8.4, os: ubuntu-24.04, php: '8.4', phpunit: '^13.4' }
-          - { leg: linux-x64-php8.5, os: ubuntu-24.04, php: '8.5', phpunit: '^13.4', release-assets: true }
+          - { leg: linux-x64-php8.1, os: ubuntu-24.04, target: x86_64-unknown-linux-musl, php: '8.1', phpunit: '^10.5', no-pest: true }
+          - { leg: linux-x64-php8.2, os: ubuntu-24.04, target: x86_64-unknown-linux-musl, php: '8.2', phpunit: '^11.5' }
+          - { leg: linux-x64-php8.3, os: ubuntu-24.04, target: x86_64-unknown-linux-musl, php: '8.3', phpunit: '^12.5' }
+          - { leg: linux-x64-php8.4, os: ubuntu-24.04, target: x86_64-unknown-linux-musl, php: '8.4', phpunit: '^13.4' }
+          - { leg: linux-x64-php8.5, os: ubuntu-24.04, target: x86_64-unknown-linux-musl, php: '8.5', phpunit: '^13.4', release-assets: true }
           # Every platform with a Dynoxide release binary.
-          - { leg: linux-arm64-php8.4, os: ubuntu-24.04-arm, php: '8.4', phpunit: '^13.4' }
-          - { leg: macos-arm64-php8.4, os: macos-26, php: '8.4', phpunit: '^13.4' }
-          - { leg: macos-x64-php8.4, os: macos-26-intel, php: '8.4', phpunit: '^13.4' }
-          - { leg: windows-x64-php8.1, os: windows-2025, php: '8.1', phpunit: '^10.5', no-pest: true }
-          - { leg: windows-x64-php8.4, os: windows-2025, php: '8.4', phpunit: '^13.4', release-assets: true }
+          - { leg: linux-arm64-php8.4, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, php: '8.4', phpunit: '^13.4' }
+          - { leg: macos-arm64-php8.4, os: macos-26, target: aarch64-apple-darwin, php: '8.4', phpunit: '^13.4' }
+          - { leg: macos-x64-php8.4, os: macos-26-intel, target: x86_64-apple-darwin, php: '8.4', phpunit: '^13.4' }
+          - { leg: windows-x64-php8.1, os: windows-2025, target: x86_64-pc-windows-msvc, php: '8.1', phpunit: '^10.5', no-pest: true }
+          - { leg: windows-x64-php8.4, os: windows-2025, target: x86_64-pc-windows-msvc, php: '8.4', phpunit: '^13.4', release-assets: true }
     steps:
       - uses: actions/checkout@v5
 
@@ -64,6 +73,16 @@ jobs:
           DYNOXIDE_CACHE_DIR: ${{ runner.temp }}/dynoxide-cache
         run: vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped ${{ matrix.no-pest && '--exclude-group pest' || '' }}
 
+      # The rest of the launcher suite against a 1.7.0 build: starting and
+      # stopping, hard kills and persistence. Skipping counts as failure.
+      - name: Launcher tests with the engine build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DYNOXIDE_STAGING_TOKEN }}
+        run: |
+          binary=$(scripts/fetch-engine-build.sh "$ENGINE_REPO" "$ENGINE_COMMIT" "${{ matrix.target }}" "$RUNNER_TEMP/engine")
+          DYNOXIDE_TEST_BINARY="$binary" vendor/bin/phpunit --testsuite launcher --exclude-group embedded --fail-on-skipped
+
       # The embedded hashes against the real release, unpacked with the
       # package's own readers. Skipping counts as failure here.
       - name: Real release assets
@@ -96,7 +115,8 @@ jobs:
         run: |
           apk add --no-cache git php84 php84-phar php84-openssl php84-zip php84-mbstring \
             php84-dom php84-xml php84-xmlwriter php84-tokenizer php84-ctype php84-iconv \
-            php84-curl php84-zlib php84-pcntl php84-simplexml composer
+            php84-curl php84-zlib php84-pcntl php84-simplexml composer github-cli
+          ln -sf /usr/bin/php84 /usr/local/bin/php
           php84 -v
 
       - uses: actions/checkout@v5
@@ -116,6 +136,13 @@ jobs:
       - name: Embedded release and the PHPUnit extension
         run: |
           su tester -s /bin/sh -c 'DYNOXIDE_TEST_DOWNLOAD=1 DYNOXIDE_CACHE_DIR=/tmp/dynoxide-cache php84 vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped'
+
+      - name: Launcher tests with the engine build
+        env:
+          GH_TOKEN: ${{ secrets.DYNOXIDE_STAGING_TOKEN }}
+        run: |
+          binary=$(scripts/fetch-engine-build.sh "$ENGINE_REPO" "$ENGINE_COMMIT" x86_64-unknown-linux-musl /tmp/engine)
+          su tester -s /bin/sh -c "DYNOXIDE_TEST_BINARY=$binary php84 vendor/bin/phpunit --testsuite launcher --exclude-group embedded --fail-on-skipped"
 
       - name: Record the leg
         run: |
