@@ -56,7 +56,7 @@ final class InstallCommandTest extends TestCase
     private function command(array $env = []): InstallCommand
     {
         return new InstallCommand(fn (): Installer => new Installer(
-            new CacheDirectory($this->tempDir() . '/cache'),
+            new CacheDirectory($this->cacheRoot()),
             new Downloader([], 10.0, 5.0),
             Platform::fromTarget(self::TARGET),
             self::VERSION,
@@ -86,9 +86,14 @@ final class InstallCommandTest extends TestCase
         return count(array_filter($this->server?->log() ?? [], static fn (array $r): bool => str_ends_with($r['target'], '.tar.gz')));
     }
 
+    private function cacheRoot(): string
+    {
+        return $this->tempDir() . DIRECTORY_SEPARATOR . 'cache';
+    }
+
     private function expectedPath(): string
     {
-        return $this->tempDir() . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . self::VERSION
+        return $this->cacheRoot() . DIRECTORY_SEPARATOR . self::VERSION
             . DIRECTORY_SEPARATOR . self::TARGET . DIRECTORY_SEPARATOR . 'dynoxide';
     }
 
