@@ -18,7 +18,7 @@ jobs:
       matrix:
         include:
           # Every supported PHP version, each with the newest PHPUnit it can run.
-          - { leg: linux-x64-php8.1, os: ubuntu-24.04, php: '8.1', phpunit: '^10.5' }
+          - { leg: linux-x64-php8.1, os: ubuntu-24.04, php: '8.1', phpunit: '^10.5', no-pest: true }
           - { leg: linux-x64-php8.2, os: ubuntu-24.04, php: '8.2', phpunit: '^11.5' }
           - { leg: linux-x64-php8.3, os: ubuntu-24.04, php: '8.3', phpunit: '^12.5' }
           - { leg: linux-x64-php8.4, os: ubuntu-24.04, php: '8.4', phpunit: '^13.4' }
@@ -27,7 +27,7 @@ jobs:
           - { leg: linux-arm64-php8.4, os: ubuntu-24.04-arm, php: '8.4', phpunit: '^13.4' }
           - { leg: macos-arm64-php8.4, os: macos-26, php: '8.4', phpunit: '^13.4' }
           - { leg: macos-x64-php8.4, os: macos-26-intel, php: '8.4', phpunit: '^13.4' }
-          - { leg: windows-x64-php8.1, os: windows-2025, php: '8.1', phpunit: '^10.5' }
+          - { leg: windows-x64-php8.1, os: windows-2025, php: '8.1', phpunit: '^10.5', no-pest: true }
           - { leg: windows-x64-php8.4, os: windows-2025, php: '8.4', phpunit: '^13.4', release-assets: true }
     steps:
       - uses: actions/checkout@v5
@@ -41,7 +41,9 @@ jobs:
 
       - name: Install dependencies
         shell: bash
+        # Pest needs PHP 8.2 or later, so the PHP 8.1 legs go without it.
         run: |
+          ${{ matrix.no-pest && 'composer remove --dev --no-update pestphp/pest' || 'true' }}
           composer require --dev --no-update "phpunit/phpunit:${{ matrix.phpunit }}"
           composer update --no-interaction --no-progress --prefer-dist
 
@@ -51,14 +53,16 @@ jobs:
         shell: bash
         run: vendor/bin/phpunit --testsuite unit --fail-on-skipped ${{ runner.os == 'Windows' && '--exclude-group unix' || '' }}
 
-      # Downloads the release this package embeds and starts it, with no
-      # options, on every platform. Skipping counts as failure here too.
-      - name: Embedded release starts
+      # Downloads the release this package embeds and starts it: with no
+      # options, and through the PHPUnit extension under PHPUnit, ParaTest
+      # and Pest. Skipping counts as failure here too, so ParaTest and Pest
+      # must have installed alongside this leg's PHPUnit.
+      - name: Embedded release and the PHPUnit extension
         shell: bash
         env:
           DYNOXIDE_TEST_DOWNLOAD: '1'
           DYNOXIDE_CACHE_DIR: ${{ runner.temp }}/dynoxide-cache
-        run: vendor/bin/phpunit --testsuite launcher --filter testStartsTheEmbeddedReleaseWithNoOptions --fail-on-skipped
+        run: vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped ${{ matrix.no-pest && '--exclude-group pest' || '' }}
 
       # The embedded hashes against the real release, unpacked with the
       # package's own readers. Skipping counts as failure here.
@@ -92,7 +96,7 @@ jobs:
         run: |
           apk add --no-cache git php84 php84-phar php84-openssl php84-zip php84-mbstring \
             php84-dom php84-xml php84-xmlwriter php84-tokenizer php84-ctype php84-iconv \
-            php84-curl php84-zlib php84-pcntl composer
+            php84-curl php84-zlib php84-pcntl php84-simplexml composer
           php84 -v
 
       - uses: actions/checkout@v5
@@ -109,9 +113,9 @@ jobs:
           chown -R tester .
           su tester -s /bin/sh -c 'php84 vendor/bin/phpunit --testsuite unit --fail-on-skipped'
 
-      - name: Embedded release starts
+      - name: Embedded release and the PHPUnit extension
         run: |
-          su tester -s /bin/sh -c 'DYNOXIDE_TEST_DOWNLOAD=1 DYNOXIDE_CACHE_DIR=/tmp/dynoxide-cache php84 vendor/bin/phpunit --testsuite launcher --filter testStartsTheEmbeddedReleaseWithNoOptions --fail-on-skipped'
+          su tester -s /bin/sh -c 'DYNOXIDE_TEST_DOWNLOAD=1 DYNOXIDE_CACHE_DIR=/tmp/dynoxide-cache php84 vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped'
 
       - name: Record the leg
         run: |

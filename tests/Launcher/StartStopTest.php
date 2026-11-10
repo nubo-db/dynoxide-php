@@ -9,6 +9,7 @@ use Dynoxide\Options;
 use Dynoxide\Server;
 use Dynoxide\Tests\Support\Dynamo;
 use Dynoxide\Tests\Support\TempDir;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -122,6 +123,7 @@ final class StartStopTest extends TestCase
      * 1.7.0 that's the fallback start, with a real binary. Needs the network,
      * so it runs only with DYNOXIDE_TEST_DOWNLOAD set.
      */
+    #[Group('embedded')]
     public function testStartsTheEmbeddedReleaseWithNoOptions(): void
     {
         if (getenv('DYNOXIDE_TEST_DOWNLOAD') !== '1') {

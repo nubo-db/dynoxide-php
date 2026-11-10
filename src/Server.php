@@ -16,9 +16,9 @@ use Dynoxide\Process\ServerProcess;
  */
 final class Server
 {
-    public const REGION = 'us-east-1';
-    public const ACCESS_KEY_ID = 'dynoxide';
-    public const SECRET_ACCESS_KEY = 'dynoxide';
+    public const REGION = AwsEnvironment::REGION;
+    public const ACCESS_KEY_ID = AwsEnvironment::ACCESS_KEY_ID;
+    public const SECRET_ACCESS_KEY = AwsEnvironment::SECRET_ACCESS_KEY;
 
     public readonly string $region;
     public readonly string $accessKeyId;
@@ -59,15 +59,7 @@ final class Server
      */
     public function environment(): array
     {
-        return [
-            'AWS_ENDPOINT_URL_DYNAMODB' => $this->endpoint,
-            'AWS_ACCESS_KEY_ID' => $this->accessKeyId,
-            'AWS_SECRET_ACCESS_KEY' => $this->secretAccessKey,
-            'AWS_REGION' => $this->region,
-            'AWS_DEFAULT_REGION' => $this->region,
-            // Laravel's DynamoDB cache and session drivers read this one.
-            'DYNAMODB_ENDPOINT' => $this->endpoint,
-        ];
+        return AwsEnvironment::for($this->endpoint);
     }
 
     /**
@@ -81,13 +73,7 @@ final class Server
      */
     public function exportEnv(): void
     {
-        foreach ($this->environment() as $name => $value) {
-            putenv("{$name}={$value}");
-            $_ENV[$name] = $value;
-            $_SERVER[$name] = $value;
-        }
-        putenv('AWS_SESSION_TOKEN');
-        unset($_ENV['AWS_SESSION_TOKEN'], $_SERVER['AWS_SESSION_TOKEN']);
+        AwsEnvironment::export($this->endpoint);
     }
 
     public function isRunning(): bool

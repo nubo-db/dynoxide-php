@@ -15,6 +15,8 @@
         "composer-runtime-api": "^2.2"
     },
     "require-dev": {
+        "brianium/paratest": "^7.3",
+        "pestphp/pest": "^3.8 || ^4.1 || ^5.0",
         "phpunit/phpunit": "^10.5 || ^11.5 || ^12.5 || ^13.4"
     },
     "suggest": {
@@ -29,6 +31,9 @@
     },
     "bin": ["bin/dynoxide"],
     "config": {
-        "sort-packages": true
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
     }
 }
