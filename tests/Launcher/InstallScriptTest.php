@@ -49,9 +49,10 @@ final class InstallScriptTest extends TestCase
     }
 
     /**
-     * A Composer project requiring the package from a copy of it, so the
-     * link Composer makes points into this test's directory, never the
-     * package being tested.
+     * A Composer project requiring the package from a copy of it, which
+     * Composer copies again into vendor/ rather than linking, as an install
+     * from Packagist would. A link would be a junction on Windows, which the
+     * clean-up can't remove.
      */
     private function project(): string
     {
@@ -66,7 +67,7 @@ final class InstallScriptTest extends TestCase
             'name' => 'fixture/app',
             'require' => ['nubo-db/dynoxide' => Release::VERSION],
             'repositories' => [
-                ['type' => 'path', 'url' => $package, 'options' => ['versions' => ['nubo-db/dynoxide' => Release::VERSION]]],
+                ['type' => 'path', 'url' => $package, 'options' => ['symlink' => false, 'versions' => ['nubo-db/dynoxide' => Release::VERSION]]],
                 ['packagist.org' => false],
             ],
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
