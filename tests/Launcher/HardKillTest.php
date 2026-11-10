@@ -129,12 +129,20 @@ final class HardKillTest extends TestCase
     public function testAKilledParaTestRunTakesItsServersWithItAfterTheirCurrentTests(): void
     {
         [$process, $endpoints, $report] = $this->runHeld('paratest', ['--processes=3'], 3, 6);
-        $started = count(file($report, FILE_SKIP_EMPTY_LINES) ?: []);
+        $lines = file($report, FILE_SKIP_EMPTY_LINES) ?: [];
+        $workers = array_values(array_unique(array_map(static fn (string $line): int => json_decode($line, true, 8, JSON_THROW_ON_ERROR)['pid'], $lines)));
 
         proc_terminate($process, 9);
 
         self::assertGoneWithin(6.0 + 5.0, $endpoints);
-        self::assertCount($started, file($report, FILE_SKIP_EMPTY_LINES) ?: [], 'no worker started another test');
+        // A worker stops its server and then tidies its own files, so wait
+        // for the workers too, before the temporary directory goes.
+        $deadline = microtime(true) + 10;
+        while (array_filter($workers, self::isRunning(...)) !== [] && microtime(true) < $deadline) {
+            usleep(50_000);
+        }
+        self::assertSame([], array_values(array_filter($workers, self::isRunning(...))), 'every worker exited');
+        self::assertCount(count($lines), file($report, FILE_SKIP_EMPTY_LINES) ?: [], 'no worker started another test');
     }
 
     /** What reached the database file before the kill is there for the next server. */
@@ -310,6 +318,18 @@ final class HardKillTest extends TestCase
         }
 
         return array_values(array_unique($pids));
+    }
+
+    private static function isRunning(int $pid): bool
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return str_contains(self::command(['tasklist', '/FI', "PID eq {$pid}", '/NH']), " {$pid} ");
+        }
+        if (PHP_OS_FAMILY === 'Linux') {
+            return is_dir("/proc/{$pid}") && !str_contains((string) @file_get_contents("/proc/{$pid}/stat"), ') Z ');
+        }
+
+        return self::command(['sh', '-c', 'kill -0 "$1" 2>/dev/null && echo yes', 'sh', (string) $pid]) === "yes\n";
     }
 
     /** @param list<string> $command */
