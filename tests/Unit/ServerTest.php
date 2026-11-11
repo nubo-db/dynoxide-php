@@ -14,6 +14,7 @@ final class ServerTest extends TestCase
     private const NAMES = [
         'AWS_ENDPOINT_URL_DYNAMODB', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
         'AWS_DEFAULT_REGION', 'DYNAMODB_ENDPOINT', 'AWS_ENDPOINT_URL', 'AWS_SESSION_TOKEN',
+        'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS',
     ];
 
     private ?Server $server = null;
@@ -58,6 +59,7 @@ final class ServerTest extends TestCase
             'AWS_REGION' => 'us-east-1',
             'AWS_DEFAULT_REGION' => 'us-east-1',
             'DYNAMODB_ENDPOINT' => 'http://127.0.0.1:54321',
+            'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS' => 'false',
         ];
         foreach ($expected as $name => $value) {
             self::assertSame([$value, $value, $value], [getenv($name), $_ENV[$name] ?? null, $_SERVER[$name] ?? null], $name);
@@ -74,6 +76,22 @@ final class ServerTest extends TestCase
         self::assertSame(
             [false, null, null],
             [getenv('AWS_SESSION_TOKEN'), $_ENV['AWS_SESSION_TOKEN'] ?? null, $_SERVER['AWS_SESSION_TOKEN'] ?? null],
+        );
+    }
+
+    public function testOverridesASettingThatWouldSendTheTestsToAws(): void
+    {
+        // With this true, in the environment or the shared config file, the
+        // SDKs ignore AWS_ENDPOINT_URL_DYNAMODB. The environment is read
+        // first, so false here beats the config file too.
+        putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true');
+        $_ENV['AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'] = $_SERVER['AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'] = 'true';
+
+        $this->server?->exportEnv();
+
+        self::assertSame(
+            ['false', 'false', 'false'],
+            [getenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'), $_ENV['AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'] ?? null, $_SERVER['AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'] ?? null],
         );
     }
 

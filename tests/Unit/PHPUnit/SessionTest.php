@@ -15,7 +15,7 @@ final class SessionTest extends TestCase
 {
     private const NAMES = [
         'AWS_ENDPOINT_URL_DYNAMODB', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
-        'AWS_DEFAULT_REGION', 'DYNAMODB_ENDPOINT', 'AWS_SESSION_TOKEN',
+        'AWS_DEFAULT_REGION', 'DYNAMODB_ENDPOINT', 'AWS_SESSION_TOKEN', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS',
     ];
 
     /** @var array<string, array{string|false, mixed, mixed}> */
@@ -86,6 +86,7 @@ final class SessionTest extends TestCase
     {
         putenv('AWS_ENDPOINT_URL_DYNAMODB=https://dynamodb.eu-west-2.amazonaws.com');
         putenv('AWS_SESSION_TOKEN=real-token');
+        putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true');
         $session = new Session($this->failing());
 
         try {
@@ -103,6 +104,7 @@ final class SessionTest extends TestCase
         self::assertSame($endpoint, $_ENV['AWS_ENDPOINT_URL_DYNAMODB'] ?? null);
         self::assertSame('dynoxide', getenv('AWS_ACCESS_KEY_ID'));
         self::assertFalse(getenv('AWS_SESSION_TOKEN'));
+        self::assertSame('false', getenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'));
         self::assertFalse(@stream_socket_client(str_replace('http://', 'tcp://', $endpoint), $errno, $errstr, 0.5));
     }
 

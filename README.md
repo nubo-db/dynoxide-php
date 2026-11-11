@@ -148,6 +148,13 @@ starts, at the server. It sets these through `putenv()`, `$_ENV` and
 | `AWS_ACCESS_KEY_ID` | `dynoxide` |
 | `AWS_SECRET_ACCESS_KEY` | `dynoxide` |
 | `AWS_REGION` and `AWS_DEFAULT_REGION` | `us-east-1` |
+| `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` | `false` |
+
+`AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` is set because `true`, in the
+environment or as `ignore_configured_endpoint_urls` in `~/.aws/config`, makes
+the SDKs skip `AWS_ENDPOINT_URL_DYNAMODB` and call AWS instead. Setting it to
+`false` overrides the config file too. It also means endpoints you've
+configured for other services are used again during the run.
 
 It also removes `AWS_SESSION_TOKEN`, so a real session token from CI isn't
 sent along with the dummy credentials. It leaves `AWS_ENDPOINT_URL` alone,

@@ -31,6 +31,10 @@ final class AwsEnvironment
             'AWS_DEFAULT_REGION' => self::REGION,
             // Laravel's DynamoDB cache and session drivers read this one.
             'DYNAMODB_ENDPOINT' => $endpoint,
+            // Set to true, here or in the shared config file, this makes the
+            // SDKs ignore AWS_ENDPOINT_URL_DYNAMODB and call AWS. The SDKs read
+            // the environment before the config file, so false wins over both.
+            'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS' => 'false',
         ];
     }
 
