@@ -55,6 +55,7 @@ final class Launcher
             $ready = $binary->launcherFlags
                 ? $this->readyLine($process, $binary, $options->startTimeout)
                 : $this->listeningLine($process, $binary, $options->startTimeout);
+            $process->rememberTree();
 
             $log("Dynoxide: {$binary->describe()}, listening on {$ready->endpoint}");
             if (!Url::isLoopback($ready->host)) {

@@ -26,7 +26,7 @@ if ($mode === 'package') {
     }));
     // Server keeps its ServerProcess private, and that keeps the handle.
     $process = (fn () => $this->process)->call($server);
-    $pid = (fn (): int => proc_get_status($this->process)['pid'])->call($process);
+    $pid = (fn (): int => $this->pid)->call($process);
     echo json_encode(['endpoint' => $server->endpoint, 'pid' => $pid]), "\n";
 } else {
     $args = [$binary, 'serve', '--port', '0', '--ready-json'];

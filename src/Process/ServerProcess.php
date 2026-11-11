@@ -24,6 +24,12 @@ final class ServerProcess
 
     private readonly int $owner;
 
+    /** The process ID PHP was given, kept for once the handle can't report it. */
+    private readonly int $pid;
+
+    /** @var array<int, string> what the process had started when it was ready, by start time */
+    private array $knownTree = [];
+
     /**
      * @param resource $process
      * @param resource|null $stdin
@@ -39,6 +45,29 @@ final class ServerProcess
         private readonly bool $windows = PHP_OS_FAMILY === 'Windows',
     ) {
         $this->owner = getmypid();
+        // Before PHP 8.3 a stopped process's status is reported once, so a
+        // binary that has already died keeps it here, not lost.
+        $status = proc_get_status($process);
+        $this->pid = (int) $status['pid'];
+        if (!$status['running']) {
+            $this->exited = [
+                'exitcode' => $status['exitcode'],
+                'signaled' => $status['signaled'],
+                'termsig' => $status['termsig'],
+            ];
+        }
+    }
+
+    /**
+     * Records what the process has started, once it's ready. A wrapper that
+     * then exits by itself leaves its child re-parented, and stop() couldn't
+     * find it from the wrapper any more.
+     */
+    public function rememberTree(): void
+    {
+        if (!$this->windows && $this->exited() === null) {
+            $this->knownTree = ProcessTree::of($this->pid);
+        }
     }
 
     /**
@@ -89,6 +118,13 @@ final class ServerProcess
      * Linux and macOS send SIGTERM, wait; then kill. A server started without
      * --exit-with-parent skips the first step, and on Windows, where there's
      * no SIGTERM, goes straight to the kill. Safe to call more than once.
+     *
+     * The signals go to everything the process started too, as recorded when
+     * it was ready and again before stdin is closed, and anything of that
+     * left running once the process has gone is stopped as well: a binary
+     * reached through a wrapper is the wrapper's child. Each is checked by
+     * its start time first. On Windows the kill takes the whole tree, but a
+     * child left behind by a wrapper that exited by itself isn't found.
      * Once it has stopped it leaves the Registry and its output is deleted.
      *
      * @return array{exitcode: int, signaled: bool, termsig: int}|null how it exited, or null if it
@@ -102,18 +138,32 @@ final class ServerProcess
         if ($this->closed) {
             return $this->exited;
         }
+        // Read before anything is signalled: the server may be a wrapper's
+        // child, and once the wrapper dies it can't be found from it.
+        $pid = $this->pid;
+        $tree = $this->windows ? [] : ($this->exited() === null ? ProcessTree::of($pid) : []) + $this->knownTree;
+        // If it has already gone, nothing waits for stdin to take effect.
+        $graceSkipped = $this->exited() !== null;
         $this->closeStdin();
         if ($this->launcherFlags) {
             $this->waitForExit($this->graceSeconds);
         }
         if ($this->exited() === null && !$this->windows) {
+            ProcessTree::signal($tree, 15);
             @proc_terminate($this->process, 15);
             $this->waitForExit($this->graceSeconds);
         }
         if ($this->exited() === null) {
+            if ($this->windows) {
+                ProcessTree::killOnWindows($pid);
+            } else {
+                ProcessTree::signal(ProcessTree::of($pid) + $tree, 9);
+            }
             @proc_terminate($this->process, 9);
             $this->waitForExit($this->graceSeconds);
         }
+        unset($tree[$pid]);
+        $this->stopLeftovers($tree, $this->launcherFlags && $graceSkipped);
         // proc_close waits for the process, so only once it's known to be gone.
         if ($this->exited() !== null) {
             proc_close($this->process);
@@ -137,6 +187,34 @@ final class ServerProcess
         $tail = array_slice(preg_split('/\r?\n/', rtrim($text)) ?: [], -$lines);
 
         return (string) preg_replace('/[^\x09\x0a\x20-\x7e]+/', ' ', implode("\n", $tail));
+    }
+
+    /**
+     * What a wrapper started can outlive the wrapper, for example when SIGTERM
+     * stopped the wrapper but not the server it forked.
+     *
+     * @param array<int, string> $tree
+     */
+    private function stopLeftovers(array $tree, bool $waitFirst): void
+    {
+        if (ProcessTree::running($tree) === []) {
+            return;
+        }
+        // A server started with --exit-with-parent stops by itself once
+        // stdin closes, which it shares with the wrapper. When the wrapper
+        // had already gone, nothing has waited for that yet, so wait first.
+        if ($waitFirst) {
+            $deadline = microtime(true) + $this->graceSeconds;
+            while (ProcessTree::running($tree) !== [] && microtime(true) < $deadline) {
+                usleep(10_000);
+            }
+        }
+        ProcessTree::signal($tree, 15);
+        $deadline = microtime(true) + $this->graceSeconds;
+        while (ProcessTree::running($tree) !== [] && microtime(true) < $deadline) {
+            usleep(10_000);
+        }
+        ProcessTree::signal($tree, 9);
     }
 
     private function closeStdin(): void

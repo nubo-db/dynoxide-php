@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Dynoxide\Binary;
 
 use Dynoxide\Exception\BinaryException;
+use Dynoxide\Process\ProcessTree;
 
 /**
  * Asks a binary of unknown version which version it is, and decides how it
@@ -59,6 +60,13 @@ final class VersionCheck
             $deadline = microtime(true) + $timeoutSeconds;
             while (($status = proc_get_status($process))['running']) {
                 if (microtime(true) >= $deadline) {
+                    // A wrapper's child would outlive the wrapper, and on
+                    // Windows keep the output files open.
+                    if (PHP_OS_FAMILY === 'Windows') {
+                        ProcessTree::killOnWindows($status['pid']);
+                    } else {
+                        ProcessTree::signal(ProcessTree::of($status['pid']), 9);
+                    }
                     proc_terminate($process, 9);
                     proc_close($process);
                     throw new BinaryException(

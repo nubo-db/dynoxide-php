@@ -119,6 +119,31 @@ final class VersionCheckTest extends TestCase
         self::assertLessThan(5.0, microtime(true) - $started);
     }
 
+    public function testATimeoutAlsoStopsWhatAWrapperStarted(): void
+    {
+        $pidFile = $this->tempDir() . DIRECTORY_SEPARATOR . 'grandchild.pid';
+        $fake = FakeBinary::forking($this->tempDir(), $pidFile);
+
+        try {
+            try {
+                VersionCheck::run($fake->command, $fake->path, 2.0);
+                self::fail('expected a timeout');
+            } catch (BinaryException $e) {
+                self::assertStringContainsString("didn't finish within 2 seconds", $e->getMessage());
+            }
+            $pid = (int) @file_get_contents($pidFile);
+            self::assertGreaterThan(0, $pid, 'the wrapper never started its child');
+            $identified = FakeBinary::identify($pid);
+            $deadline = microtime(true) + 3;
+            while (FakeBinary::alive($pid) && microtime(true) < $deadline) {
+                usleep(50_000);
+            }
+            self::assertFalse(FakeBinary::alive($pid), "the wrapper's child, {$pid}, is still running");
+        } finally {
+            FakeBinary::killIdentified($identified ?? []);
+        }
+    }
+
     /**
      * PHP 8.3 and later fail to start it; earlier versions start a child
      * that exits 127. Either way it's refused with the path.
