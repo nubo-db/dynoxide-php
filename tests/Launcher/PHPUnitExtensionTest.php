@@ -255,7 +255,7 @@ final class PHPUnitExtensionTest extends TestCase
             if (PHP_OS_FAMILY === 'Windows') {
                 ProcessTree::killOnWindows($status['pid']);
             } else {
-                ProcessTree::signal(ProcessTree::of($status['pid']), 9);
+                ProcessTree::kill($status['pid']);
             }
             proc_terminate($process, 9);
             self::fail("{$tool} was still running after {$seconds} seconds:\n" . file_get_contents($output));

@@ -19,8 +19,7 @@ namespace Dynoxide\Process;
  * A record is judged only under the clock it was written with (the same boot
  * and process ID namespace on Linux, ps on the same host elsewhere): a /tmp
  * shared with a container would otherwise make every owner look dead. Linux
- * and macOS only, with the posix extension, so only this user's directories
- * are touched.
+ * and macOS only, and only this user's directories are touched.
  *
  * @internal
  */
@@ -47,14 +46,14 @@ final class Leftovers
     /** Stops and deletes what dead owners left under $root. */
     public static function sweep(string $root, float $graceSeconds, bool $windows = PHP_OS_FAMILY === 'Windows'): void
     {
-        if ($windows || !function_exists('posix_geteuid')) {
+        if ($windows) {
             return;
         }
         $clock = ProcessTree::clock();
-        if ($clock === null || ProcessTree::startTime(getmypid()) === null) {
+        $user = self::user($root);
+        if ($clock === null || $user === null || ProcessTree::startTime(getmypid()) === null) {
             return;
         }
-        $user = posix_geteuid();
         foreach (@glob(rtrim($root, '/\\') . DIRECTORY_SEPARATOR . 'dynoxide-*', GLOB_ONLYDIR | GLOB_NOSORT) ?: [] as $dir) {
             if (!preg_match('/^dynoxide-[0-9a-f]{16}$/', basename($dir)) || is_link($dir) || @fileowner($dir) !== $user) {
                 continue;
@@ -82,6 +81,25 @@ final class Leftovers
             }
             ServerProcess::removeDir($dir);
         }
+    }
+
+    /**
+     * Who this process creates files as, from a file made to find out: the
+     * posix extension isn't always installed.
+     */
+    private static function user(string $root): ?int
+    {
+        if (function_exists('posix_geteuid')) {
+            return posix_geteuid();
+        }
+        $probe = @tempnam($root, 'dynoxide-probe-');
+        if ($probe === false) {
+            return null;
+        }
+        $owner = @fileowner($probe);
+        @unlink($probe);
+
+        return $owner === false ? null : $owner;
     }
 
     /** @param array<string, mixed> $record */
@@ -141,7 +159,7 @@ final class Leftovers
         while (ProcessTree::running($tree) !== [] && microtime(true) < $deadline) {
             usleep(10_000);
         }
-        ProcessTree::signal($tree, 9);
+        ProcessTree::killAll($tree);
         $deadline = microtime(true) + 1.0;
         while (ProcessTree::running($tree) !== [] && microtime(true) < $deadline) {
             usleep(10_000);

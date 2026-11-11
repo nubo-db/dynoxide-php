@@ -88,6 +88,51 @@ final class ProcessTree
         return array_filter($tree, static fn (string $start, int $pid): bool => self::startTime($pid) === $start, ARRAY_FILTER_USE_BOTH);
     }
 
+    /**
+     * Kills the process and everything below it. Each is stopped (SIGSTOP)
+     * before its children are read, so none can start another child between
+     * the read and the kill. Linux and macOS only.
+     */
+    public static function kill(int $pid): void
+    {
+        $start = self::startTime($pid);
+        if ($start === null) {
+            return;
+        }
+        $tree = [];
+        $queue = [$pid => $start];
+        while ($queue !== [] && count($tree) < 256) {
+            $current = array_key_first($queue);
+            $tree[$current] = $queue[$current];
+            unset($queue[$current]);
+            self::freeze($current, $tree[$current]);
+            $children = self::childrenByParent();
+            foreach ($children === null ? self::pgrepChildren($current) : ($children[$current] ?? []) as $child) {
+                if (!isset($tree[$child]) && ($childStart = self::startTime($child)) !== null) {
+                    $queue[$child] = $childStart;
+                }
+            }
+            // Its children are known, so it can go now: nothing is left
+            // stopped if this is cut short.
+            self::signal([$current => $tree[$current]], 9);
+        }
+        self::signal($tree, 9);
+    }
+
+    /**
+     * Kills each process in the tree that's still the one recorded, and
+     * everything it has started since.
+     *
+     * @param array<int, string> $tree
+     */
+    public static function killAll(array $tree): void
+    {
+        foreach (array_keys(self::running($tree)) as $pid) {
+            self::kill($pid);
+        }
+        self::signal($tree, 9);
+    }
+
     /** Kills the process and everything it started, on Windows. */
     public static function killOnWindows(int $pid): void
     {
@@ -183,6 +228,22 @@ final class ProcessTree
         }
 
         return self::canExec() ? 'ps:' . php_uname('n') : null;
+    }
+
+    /**
+     * Sends SIGSTOP, by name where its number isn't known: it differs between
+     * Linux, the BSDs and other systems.
+     */
+    private static function freeze(int $pid, string $start): void
+    {
+        if (self::running([$pid => $start]) === []) {
+            return;
+        }
+        if (defined('SIGSTOP') && function_exists('posix_kill')) {
+            @posix_kill($pid, SIGSTOP);
+        } elseif (self::canExec()) {
+            @exec('kill -s STOP ' . $pid . ' 2>/dev/null');
+        }
     }
 
     /** exec() can be disabled, and calling it then throws rather than failing. */

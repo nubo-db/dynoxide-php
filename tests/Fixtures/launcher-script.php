@@ -8,8 +8,8 @@
 //                      a test calls exit(); prints the directory and the port
 //   fork               fork; the child calls stop() and exits normally; then
 //                      report whether the server is still running
-//   fatal              like shutdown-exit, then dies of a fatal error (out of
-//                      memory), so neither shutdown functions nor destructors
+//   fatal              like shutdown-exit, then dies of a fatal error (a
+//                      function declared twice), so neither shutdown functions nor destructors
 //                      stop the server; prints the directory and the port first
 //   fatal-wrapped      the same, with the server behind a wrapper that runs it
 //                      as a child
@@ -55,11 +55,9 @@ if ($mode === 'shutdown-exit') {
 
 if ($fatal) {
     echo $dir, "\n", $server->port, "\n";
-    ini_set('memory_limit', '32M');
-    $hog = [];
-    while (true) {
-        $hog[] = str_repeat('x', 1 << 20);
-    }
+    // A fatal error that doesn't depend on the allocator, as running out of
+    // memory does: it goes through the same path, so no destructors run.
+    eval('function dynoxide_twice() {} function dynoxide_twice() {}');
 }
 
 if ($mode === 'fork') {

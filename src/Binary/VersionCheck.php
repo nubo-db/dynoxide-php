@@ -65,7 +65,7 @@ final class VersionCheck
                     if (PHP_OS_FAMILY === 'Windows') {
                         ProcessTree::killOnWindows($status['pid']);
                     } else {
-                        ProcessTree::signal(ProcessTree::of($status['pid']), 9);
+                        ProcessTree::kill($status['pid']);
                     }
                     proc_terminate($process, 9);
                     proc_close($process);

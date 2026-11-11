@@ -161,7 +161,8 @@ final class ServerProcess
             if ($this->windows) {
                 ProcessTree::killOnWindows($pid);
             } else {
-                ProcessTree::signal(ProcessTree::of($pid) + $tree, 9);
+                ProcessTree::kill($pid);
+                ProcessTree::signal($tree, 9);
             }
             @proc_terminate($this->process, 9);
             $this->waitForExit($this->graceSeconds);
@@ -218,7 +219,7 @@ final class ServerProcess
         while (ProcessTree::running($tree) !== [] && microtime(true) < $deadline) {
             usleep(10_000);
         }
-        ProcessTree::signal($tree, 9);
+        ProcessTree::killAll($tree);
     }
 
     private function closeStdin(): void

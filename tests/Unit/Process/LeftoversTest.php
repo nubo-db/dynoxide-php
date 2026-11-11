@@ -8,11 +8,9 @@ use Dynoxide\Process\Leftovers;
 use Dynoxide\Process\ProcessTree;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\Group;
-use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 
 #[Group('unix')]
-#[RequiresPhpExtension('posix')]
 final class LeftoversTest extends TestCase
 {
     use TempDir;

@@ -346,9 +346,10 @@ final class LauncherTest extends TestCase
         mkdir($root);
         $marker = $this->tempDir() . '/stopped';
         $command = implode(' ', array_map('escapeshellarg', [PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/../../Fixtures/launcher-script.php', $mode, $marker]));
-        exec('LAUNCHER_TEMP_ROOT=' . escapeshellarg($root) . ' ' . $command . ' 2>/dev/null', $output, $code);
+        $stderr = $this->tempDir() . '/stderr';
+        exec('LAUNCHER_TEMP_ROOT=' . escapeshellarg($root) . ' ' . $command . ' 2>' . escapeshellarg($stderr), $output, $code);
 
-        self::assertSame(2, $code, 'the other shutdown function ran');
+        self::assertSame(2, $code, 'the other shutdown function ran; stderr: ' . @file_get_contents($stderr));
         self::assertCount(2, $output);
         [$dir, $port] = [$output[0], (int) $output[1]];
         self::assertDirectoryExists($dir, 'the fatal error left the output directory');
