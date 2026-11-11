@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dynoxide\Tests\Launcher;
 
+use Dynoxide\Process\ProcessTree;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -242,13 +243,22 @@ final class PHPUnitExtensionTest extends TestCase
         );
         self::assertIsResource($process);
         fclose($pipes[0]);
-        $deadline = microtime(true) + 300;
+        // FIXTURE_DEADLINE shortens the wait, to check what a timeout leaves.
+        $seconds = (float) (getenv('FIXTURE_DEADLINE') ?: 300);
+        $deadline = microtime(true) + $seconds;
         while (($status = proc_get_status($process))['running'] && microtime(true) < $deadline) {
             usleep(50_000);
         }
         if ($status['running']) {
+            // Under ParaTest and Pest --parallel this is the parent: its
+            // workers, and their servers, are its children.
+            if (PHP_OS_FAMILY === 'Windows') {
+                ProcessTree::killOnWindows($status['pid']);
+            } else {
+                ProcessTree::signal(ProcessTree::of($status['pid']), 9);
+            }
             proc_terminate($process, 9);
-            self::fail("{$tool} was still running after 300 seconds:\n" . file_get_contents($output));
+            self::fail("{$tool} was still running after {$seconds} seconds:\n" . file_get_contents($output));
         }
         proc_close($process);
 
