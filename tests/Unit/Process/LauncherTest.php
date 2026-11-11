@@ -12,6 +12,7 @@ use Dynoxide\Tests\Support\FakeServer;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
+use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 
 final class LauncherTest extends TestCase
@@ -329,6 +330,60 @@ final class LauncherTest extends TestCase
         self::assertDirectoryDoesNotExist($output[0]);
         $socket = @stream_socket_client('tcp://127.0.0.1:' . (int) $output[1], $errno, $errstr, 1.0);
         self::assertFalse($socket, 'nothing is listening on its port');
+    }
+
+    /**
+     * A fatal error runs no destructors, and an earlier shutdown function that
+     * exits stops the rest, so a 1.6.x-style server outlives PHP, and its
+     * output directory stays. The next start clears both up.
+     */
+    #[Group('unix')]
+    #[TestWith(['fatal'])]
+    #[TestWith(['fatal-wrapped'])]
+    public function testTheNextStartClearsUpAfterAFatalError(string $mode): void
+    {
+        $root = $this->tempDir() . '/root';
+        mkdir($root);
+        $marker = $this->tempDir() . '/stopped';
+        $command = implode(' ', array_map('escapeshellarg', [PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/../../Fixtures/launcher-script.php', $mode, $marker]));
+        exec('LAUNCHER_TEMP_ROOT=' . escapeshellarg($root) . ' ' . $command . ' 2>/dev/null', $output, $code);
+
+        self::assertSame(2, $code, 'the other shutdown function ran');
+        self::assertCount(2, $output);
+        [$dir, $port] = [$output[0], (int) $output[1]];
+        self::assertDirectoryExists($dir, 'the fatal error left the output directory');
+        $socket = @stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 1.0);
+        self::assertNotFalse($socket, 'the fatal error left the server running');
+        fclose($socket);
+
+        $next = FakeServer::launcher(tempRoot: $root)->start(FakeServer::binary(), new Options(log: static function (): void {
+        }));
+        try {
+            self::assertDirectoryDoesNotExist($dir);
+            self::assertFalse(@stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 1.0), 'nothing is listening on its port');
+        } finally {
+            $next->stop();
+        }
+    }
+
+    /** A start leaves alone a server whose owner is still running, as with parallel workers. */
+    public function testAStartLeavesAnotherLiveServerAlone(): void
+    {
+        $root = $this->tempDir() . '/root';
+        mkdir($root);
+        $silent = new Options(log: static function (): void {
+        });
+        $first = FakeServer::launcher(['FAKE_MODE' => 'legacy'], tempRoot: $root)->start(FakeServer::binary(false), $silent);
+        try {
+            $dir = (fn (): string => $this->process->outputDir)->call($first);
+            $second = FakeServer::launcher(tempRoot: $root)->start(FakeServer::binary(), $silent);
+            $second->stop();
+
+            self::assertDirectoryExists($dir);
+            self::assertTrue($first->isRunning());
+        } finally {
+            $first->stop();
+        }
     }
 
     /** The shutdown function stops a server nobody stopped, and clears up its output. */

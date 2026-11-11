@@ -174,9 +174,9 @@ holds. When that process goes, however it goes, the server stops too:
 - **ParaTest killed.** Each worker finishes the test it's running, then
   exits, and its server goes with it. So a server can outlive ParaTest by the
   length of one test.
-- **A fatal error.** The server stops, but its log directory
-  (`dynoxide-*` in the system temp directory) is left behind, because PHP
-  skips the clean-up after a fatal error.
+- **A fatal error.** The server stops, but PHP skips the clean-up after a
+  fatal error, so its log directory (`dynoxide-*` in the system temp
+  directory) stays until the next start on Linux or macOS deletes it.
 - **Forking after start.** A process forked with `pcntl_fork()` after the
   server started holds its stdin too, so the server keeps running until that
   child exits as well. `stop()` in the child does nothing; only the process
@@ -185,7 +185,8 @@ holds. When that process goes, however it goes, the server stops too:
 This needs Dynoxide 1.7.0 or later. An older binary, from
 [`binary` or `DYNOXIDE_BINARY`](#your-own-binary), stops on `stop()` or when
 PHP exits normally, but keeps running after Ctrl-C, a killed run or a fatal
-error.
+error. On Linux and macOS the next start stops one left by a process that has
+gone, if it's still the same process.
 
 ## CI
 

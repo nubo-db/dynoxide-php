@@ -45,9 +45,12 @@ final class Launcher
     public function start(LocatedBinary $binary, Options $options): Server
     {
         $log = $options->logger();
+        Leftovers::sweep($this->tempRoot, $this->graceSeconds, $this->osFamily === 'Windows');
         $dir = $this->outputDir();
         $process = $this->spawn($binary, $options, $dir);
         Registry::add($process);
+        $spawned = ProcessTree::of($process->pid);
+        Leftovers::record($dir, $spawned);
 
         // Until the Server is returned nobody else can stop it, so anything
         // that goes wrong first, the log callback included, stops it here.
@@ -55,7 +58,7 @@ final class Launcher
             $ready = $binary->launcherFlags
                 ? $this->readyLine($process, $binary, $options->startTimeout)
                 : $this->listeningLine($process, $binary, $options->startTimeout);
-            $process->rememberTree();
+            Leftovers::record($dir, $process->rememberTree() + $spawned);
 
             $log("Dynoxide: {$binary->describe()}, listening on {$ready->endpoint}");
             if (!Url::isLoopback($ready->host)) {
@@ -89,6 +92,7 @@ final class Launcher
             }
             fclose($file);
         }
+        Leftovers::record($dir);
 
         return $dir;
     }

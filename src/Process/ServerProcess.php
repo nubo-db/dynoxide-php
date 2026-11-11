@@ -25,7 +25,7 @@ final class ServerProcess
     private readonly int $owner;
 
     /** The process ID PHP was given, kept for once the handle can't report it. */
-    private readonly int $pid;
+    public readonly int $pid;
 
     /** @var array<int, string> what the process had started when it was ready, by start time */
     private array $knownTree = [];
@@ -62,12 +62,16 @@ final class ServerProcess
      * Records what the process has started, once it's ready. A wrapper that
      * then exits by itself leaves its child re-parented, and stop() couldn't
      * find it from the wrapper any more.
+     *
+     * @return array<int, string> what it has started, by start time
      */
-    public function rememberTree(): void
+    public function rememberTree(): array
     {
         if (!$this->windows && $this->exited() === null) {
             $this->knownTree = ProcessTree::of($this->pid);
         }
+
+        return $this->knownTree;
     }
 
     /**
@@ -77,7 +81,7 @@ final class ServerProcess
      * stopped here. After a fatal error (out of memory, a time limit) PHP runs
      * no destructors either: a 1.7.0 or later server still stops when its
      * stdin closes, but an older one keeps running and the output directory
-     * stays behind.
+     * stays behind, until the next start clears both up (see Leftovers).
      */
     public function __destruct()
     {

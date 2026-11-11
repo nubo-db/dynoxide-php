@@ -96,8 +96,11 @@ final class ProcessTree
         }
     }
 
-    /** When the process started, or null if it isn't running or is a zombie. */
-    private static function startTime(int $pid): ?string
+    /**
+     * When the process started, or null if it isn't running, is a zombie or
+     * can't be told. Linux and macOS only.
+     */
+    public static function startTime(int $pid): ?string
     {
         if (is_dir('/proc/self')) {
             $stat = @file_get_contents("/proc/{$pid}/stat");
@@ -114,7 +117,9 @@ final class ProcessTree
         }
         $out = [];
         $status = 1;
-        @exec('ps -o stat= -o lstart= -p ' . $pid . ' 2>/dev/null', $out, $status);
+        // lstart follows the locale and time zone; fix both, so another
+        // process reads the same text.
+        @exec('LC_ALL=C TZ=UTC0 ps -o stat= -o lstart= -p ' . $pid . ' 2>/dev/null', $out, $status);
         $line = trim($out[0] ?? '');
         if ($status !== 0 || $line === '' || $line[0] === 'Z') {
             return null;
@@ -160,6 +165,24 @@ final class ProcessTree
         @exec('pgrep -P ' . $pid . ' 2>/dev/null', $out, $status);
 
         return $status === 0 ? array_map('intval', array_filter($out, static fn (string $l): bool => ctype_digit(trim($l)))) : [];
+    }
+
+    /**
+     * What start times here are measured against: on Linux the boot and the
+     * process ID namespace, elsewhere ps on this host. Start times read under
+     * different clocks can't be compared, and the same process ID can mean
+     * another process. Null when it can't be told.
+     */
+    public static function clock(): ?string
+    {
+        if (is_dir('/proc/self')) {
+            $boot = @file_get_contents('/proc/sys/kernel/random/boot_id');
+            $namespace = @readlink('/proc/self/ns/pid');
+
+            return $boot === false || trim($boot) === '' || $namespace === false ? null : 'proc:' . trim($boot) . ':' . $namespace;
+        }
+
+        return self::canExec() ? 'ps:' . php_uname('n') : null;
     }
 
     /** exec() can be disabled, and calling it then throws rather than failing. */
