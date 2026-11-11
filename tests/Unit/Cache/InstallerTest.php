@@ -12,7 +12,7 @@ use Dynoxide\Exception\CacheException;
 use Dynoxide\Exception\DynoxideException;
 use Dynoxide\Platform;
 use Dynoxide\Release;
-use Dynoxide\Tests\Support\Served;
+use Dynoxide\Tests\Support\ServedRelease;
 use Dynoxide\Tests\Support\TarBuilder;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -27,14 +27,16 @@ final class InstallerTest extends TestCase
     private const TARGET = 'x86_64-unknown-linux-musl';
     private const VERSION = '1.7.0';
 
-    private ?Served $server = null;
-    private string $binary = '';
-    private string $archiveHash = '';
-    private string $binaryHash = '';
+    private ServedRelease $served;
+
+    protected function setUp(): void
+    {
+        $this->served = new ServedRelease($this->tempDir());
+    }
 
     protected function tearDown(): void
     {
-        $this->server?->stop();
+        $this->served->stop();
     }
 
     /**
@@ -43,35 +45,7 @@ final class InstallerTest extends TestCase
      */
     private function release(string $version = self::VERSION, string $target = self::TARGET, ?string $archive = null, ?string $sums = null, ?string $binary = null): void
     {
-        $platform = Platform::fromTarget($target);
-        $dir = $this->tempDir() . '/release-' . $version;
-        @mkdir($dir);
-        $this->binary = $binary ?? "binary for {$version} " . random_bytes(3000);
-        $path = "{$dir}/" . $platform->archiveName();
-
-        if ($archive !== null) {
-            file_put_contents($path, $archive);
-        } elseif ($platform->isWindows()) {
-            $zip = new \ZipArchive();
-            $zip->open($path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
-            $zip->addFromString('dynoxide.exe', $this->binary);
-            $zip->close();
-        } else {
-            (new TarBuilder(TarBuilder::GNU))->add('dynoxide', $this->binary)->writeGz($path);
-        }
-        $this->archiveHash = (string) hash_file('sha256', $path);
-        $this->binaryHash = hash('sha256', $this->binary);
-        file_put_contents("{$dir}/sha256sums.txt", $sums ?? "{$this->archiveHash}  {$platform->archiveName()}\n");
-
-        $routes = [
-            "/v{$version}/" . $platform->archiveName() => ['file' => $path],
-            "/v{$version}/sha256sums.txt" => ['file' => "{$dir}/sha256sums.txt"],
-        ];
-        if ($this->server === null) {
-            $this->server = Served::http($this->tempDir(), $routes);
-        } else {
-            $this->server->routes($routes);
-        }
+        $this->served->publish($version, $target, $archive, $sums, $binary);
     }
 
     private function root(): string
@@ -81,20 +55,12 @@ final class InstallerTest extends TestCase
 
     private function installer(string $version = self::VERSION, string $target = self::TARGET, ?string $archiveHash = null, ?string $binaryHash = null): Installer
     {
-        return new Installer(
-            new CacheDirectory($this->root()),
-            new Downloader([], 10.0, 5.0),
-            Platform::fromTarget($target),
-            $version,
-            $archiveHash ?? $this->archiveHash,
-            $binaryHash ?? $this->binaryHash,
-            $this->server?->url() ?? 'https://example.invalid',
-        );
+        return $this->served->installer($this->root(), $version, $target, $archiveHash, $binaryHash);
     }
 
     private function downloads(): int
     {
-        return count(array_filter($this->server?->log() ?? [], static fn (array $r): bool => str_ends_with($r['target'], '.tar.gz') || str_ends_with($r['target'], '.zip')));
+        return $this->served->downloads();
     }
 
     /** @return list<string> everything in the version directory */
@@ -115,8 +81,8 @@ final class InstallerTest extends TestCase
             str_replace('\\', '/', $this->root() . '/1.7.0/' . self::TARGET . '/dynoxide'),
             str_replace('\\', '/', $path),
         );
-        self::assertSame($this->binary, file_get_contents($path));
-        self::assertSame($this->binaryHash . "\n", file_get_contents(dirname($path) . '/dynoxide.sha256'));
+        self::assertSame($this->served->binary, file_get_contents($path));
+        self::assertSame($this->served->binaryHash . "\n", file_get_contents(dirname($path) . '/dynoxide.sha256'));
         if (PHP_OS_FAMILY !== 'Windows') {
             self::assertSame(0755, fileperms($path) & 0777);
         }
@@ -151,7 +117,7 @@ final class InstallerTest extends TestCase
 
         $path = $this->installer()->install(true);
 
-        self::assertSame($this->binary, file_get_contents($path));
+        self::assertSame($this->served->binary, file_get_contents($path));
         self::assertSame(2, $this->downloads());
         self::assertCount(3, $this->leftovers());
     }
@@ -164,7 +130,7 @@ final class InstallerTest extends TestCase
 
         $this->installer()->install();
 
-        self::assertSame($this->binary, file_get_contents($path));
+        self::assertSame($this->served->binary, file_get_contents($path));
         self::assertSame(2, $this->downloads());
         self::assertCount(3, $this->leftovers(), 'The bad install should be gone, not left aside');
     }
@@ -180,7 +146,7 @@ final class InstallerTest extends TestCase
         self::assertNull($this->installer()->installed());
         $this->installer()->install();
 
-        self::assertSame($this->binary, file_get_contents($path));
+        self::assertSame($this->served->binary, file_get_contents($path));
     }
 
     #[Group('unix')]
@@ -207,8 +173,8 @@ final class InstallerTest extends TestCase
         $this->release();
         $elsewhere = $this->tempDir() . '/elsewhere';
         mkdir($elsewhere, 0700);
-        file_put_contents("{$elsewhere}/dynoxide", $this->binary);
-        file_put_contents("{$elsewhere}/dynoxide.sha256", $this->binaryHash . "\n");
+        file_put_contents("{$elsewhere}/dynoxide", $this->served->binary);
+        file_put_contents("{$elsewhere}/dynoxide.sha256", $this->served->binaryHash . "\n");
         mkdir($this->root() . '/1.7.0', 0700, true);
         chmod($this->root(), 0700);
         symlink($elsewhere, $this->root() . '/1.7.0/' . self::TARGET);
@@ -264,7 +230,7 @@ final class InstallerTest extends TestCase
             self::fail('Expected a failure');
         } catch (DynoxideException $e) {
             self::assertStringContainsString('binary inside', $e->getMessage());
-            self::assertStringContainsString("got {$this->binaryHash}", $e->getMessage());
+            self::assertStringContainsString("got {$this->served->binaryHash}", $e->getMessage());
             self::assertStringContainsString('DYNOXIDE_DOWNLOAD_BASE_URL', $e->getMessage());
         }
         self::assertSame([], $this->leftovers());
@@ -290,7 +256,7 @@ final class InstallerTest extends TestCase
     public function testAFailedDownloadSaysWhatToTryAndLeavesNothingBehind(): void
     {
         $this->release();
-        $this->server?->routes([]);
+        $this->served->server?->routes([]);
 
         try {
             $this->installer()->install();
@@ -308,9 +274,9 @@ final class InstallerTest extends TestCase
     {
         $this->release();
         $platform = Platform::fromTarget(self::TARGET);
-        $this->release(sums: "{$this->archiveHash}  {$platform->archiveName()}
+        $this->release(sums: "{$this->served->archiveHash}  {$platform->archiveName()}
 not a line
-", binary: $this->binary);
+", binary: $this->served->binary);
 
         $this->expectException(DynoxideException::class);
         $this->expectExceptionMessage("can't be read: not a line");
@@ -321,14 +287,14 @@ not a line
     {
         $this->release('1.7.0-rc.1');
         $rc = $this->installer('1.7.0-rc.1')->install();
-        $rcBinary = $this->binary;
+        $rcBinary = $this->served->binary;
 
         $this->release('1.7.0');
         $final = $this->installer('1.7.0')->install();
 
         self::assertNotSame(dirname($rc, 2), dirname($final, 2));
         self::assertSame($rcBinary, file_get_contents($rc));
-        self::assertSame($this->binary, file_get_contents($final));
+        self::assertSame($this->served->binary, file_get_contents($final));
     }
 
     #[RequiresPhpExtension('zip')]
@@ -339,7 +305,7 @@ not a line
         $path = $this->installer(target: 'x86_64-pc-windows-msvc')->install();
 
         self::assertStringEndsWith('dynoxide.exe', $path);
-        self::assertSame($this->binary, file_get_contents($path));
+        self::assertSame($this->served->binary, file_get_contents($path));
     }
 
     public function testRefusesAnHttpMirrorOnAnotherHost(): void
@@ -376,9 +342,9 @@ not a line
             'root' => $this->root(),
             'target' => self::TARGET,
             'version' => self::VERSION,
-            'archive' => $this->archiveHash,
-            'binary' => $this->binaryHash,
-            'base' => $this->server?->url(),
+            'archive' => $this->served->archiveHash,
+            'binary' => $this->served->binaryHash,
+            'base' => $this->served->server?->url(),
         ]);
 
         $workers = [];
@@ -401,7 +367,7 @@ not a line
         }
 
         $expected = $this->root() . DIRECTORY_SEPARATOR . self::VERSION . DIRECTORY_SEPARATOR . self::TARGET
-            . DIRECTORY_SEPARATOR . 'dynoxide' . "\n" . $this->binaryHash;
+            . DIRECTORY_SEPARATOR . 'dynoxide' . "\n" . $this->served->binaryHash;
         self::assertSame(array_fill(0, 6, $expected), $results);
         self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256'], $this->leftovers());
     }
@@ -409,12 +375,12 @@ not a line
     public function testUsesAnotherProcessesInstallThatLandsFirst(): void
     {
         $this->release();
-        $winner = $this->stageCompetingInstall($this->binary, $this->binaryHash);
+        $winner = $this->stageCompetingInstall($this->served->binary, $this->served->binaryHash);
 
         $path = $this->installer()->install();
 
         self::assertSame('theirs', file_get_contents(dirname($path) . '/marker'), 'The winner\'s install should be kept');
-        self::assertSame($this->binary, file_get_contents($path));
+        self::assertSame($this->served->binary, file_get_contents($path));
         self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256', self::TARGET . '/marker'], $this->leftovers());
         self::assertDirectoryDoesNotExist($winner);
     }
@@ -426,7 +392,7 @@ not a line
 
         $path = $this->installer()->install();
 
-        self::assertSame($this->binary, file_get_contents($path));
+        self::assertSame($this->served->binary, file_get_contents($path));
         self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256'], $this->leftovers());
     }
 
@@ -444,7 +410,7 @@ not a line
     {
         $this->release();
         $path = $this->installer()->install();
-        file_put_contents(dirname($path) . '/dynoxide.sha256', $format($this->binaryHash));
+        file_put_contents(dirname($path) . '/dynoxide.sha256', $format($this->served->binaryHash));
 
         self::assertSame($path, $this->installer()->installed());
         self::assertSame($path, $this->installer()->install());
@@ -471,7 +437,7 @@ not a line
         self::assertNull($this->installer()->installed());
         $this->installer()->install();
 
-        self::assertSame($this->binaryHash . "\n", file_get_contents($sums));
+        self::assertSame($this->served->binaryHash . "\n", file_get_contents($sums));
         self::assertSame(2, $this->downloads());
     }
 
@@ -609,7 +575,7 @@ not a line
         $path = $installer->install();
 
         self::assertSame(3, $calls);
-        self::assertSame($this->binary, file_get_contents($path));
+        self::assertSame($this->served->binary, file_get_contents($path));
         self::assertSame([self::TARGET, self::TARGET . '/dynoxide', self::TARGET . '/dynoxide.sha256'], $this->leftovers());
     }
 
@@ -654,8 +620,8 @@ not a line
         $path = $this->installer()->install();
         file_put_contents($path, 'corrupted');
         $dir = dirname($path);
-        $binary = $this->binary;
-        $hash = $this->binaryHash;
+        $binary = $this->served->binary;
+        $hash = $this->served->binaryHash;
         // Just before the bad install is moved aside, another process
         // replaces it with a good one.
         $installer = $this->withRename($this->installer(), static function (string $from, string $to) use ($dir, $binary, $hash): bool {
@@ -681,8 +647,8 @@ not a line
         file_put_contents($path, 'corrupted');
         $dir = dirname($path);
         $versionDir = dirname($dir);
-        $binary = $this->binary;
-        $hash = $this->binaryHash;
+        $binary = $this->served->binary;
+        $hash = $this->served->binaryHash;
         $other = $this->installer();
         $sweeps = 0;
         $sweep = static function () use ($other, $versionDir, &$sweeps): void {
@@ -729,7 +695,7 @@ not a line
 
         $target = $this->root() . '/' . self::VERSION . '/' . self::TARGET;
         $archiveName = Platform::fromTarget(self::TARGET)->archiveName();
-        $this->server?->routes([
+        $this->served->server?->routes([
             '/v' . self::VERSION . '/' . $archiveName => ['file' => $this->tempDir() . '/release-' . self::VERSION . '/' . $archiveName],
             '/v' . self::VERSION . '/sha256sums.txt' => [
                 'file' => $this->tempDir() . '/release-' . self::VERSION . '/sha256sums.txt',

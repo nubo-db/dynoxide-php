@@ -4,13 +4,9 @@ declare(strict_types=1);
 
 namespace Dynoxide\Tests\Unit\Console;
 
-use Dynoxide\Cache\CacheDirectory;
 use Dynoxide\Cache\Installer;
 use Dynoxide\Console\InstallCommand;
-use Dynoxide\Download\Downloader;
-use Dynoxide\Platform;
-use Dynoxide\Tests\Support\Served;
-use Dynoxide\Tests\Support\TarBuilder;
+use Dynoxide\Tests\Support\ServedRelease;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -22,48 +18,28 @@ final class InstallCommandTest extends TestCase
     private const TARGET = 'x86_64-unknown-linux-musl';
     private const VERSION = '1.7.0';
 
-    private ?Served $server = null;
-    private string $archiveHash = '';
-    private string $binaryHash = '';
+    private ServedRelease $served;
+
+    protected function setUp(): void
+    {
+        $this->served = new ServedRelease($this->tempDir());
+    }
 
     protected function tearDown(): void
     {
-        $this->server?->stop();
+        $this->served->stop();
     }
 
-    /** Serves a release with one target's archive, or a broken one. */
+    /** Serves a release with one target's archive, or a damaged one. */
     private function release(?string $archive = null): void
     {
-        $platform = Platform::fromTarget(self::TARGET);
-        $dir = $this->tempDir() . '/release';
-        @mkdir($dir);
-        $binary = 'binary ' . random_bytes(2000);
-        $path = "{$dir}/" . $platform->archiveName();
-        (new TarBuilder(TarBuilder::GNU))->add('dynoxide', $binary)->writeGz($path);
-        $this->archiveHash = (string) hash_file('sha256', $path);
-        $this->binaryHash = hash('sha256', $binary);
-        if ($archive !== null) {
-            file_put_contents($path, $archive);
-        }
-        file_put_contents("{$dir}/sha256sums.txt", "{$this->archiveHash}  {$platform->archiveName()}\n");
-        $this->server = Served::http($this->tempDir(), [
-            '/v' . self::VERSION . '/' . $platform->archiveName() => ['file' => $path],
-            '/v' . self::VERSION . '/sha256sums.txt' => ['file' => "{$dir}/sha256sums.txt"],
-        ]);
+        $this->served->publish(self::VERSION, self::TARGET, corrupt: $archive);
     }
 
     /** @param array<string, string> $env */
     private function command(array $env = []): InstallCommand
     {
-        return new InstallCommand(fn (): Installer => new Installer(
-            new CacheDirectory($this->cacheRoot()),
-            new Downloader([], 10.0, 5.0),
-            Platform::fromTarget(self::TARGET),
-            self::VERSION,
-            $this->archiveHash,
-            $this->binaryHash,
-            $this->server?->url() ?? 'https://example.invalid',
-        ), $env);
+        return new InstallCommand(fn (): Installer => $this->served->installer($this->cacheRoot(), self::VERSION, self::TARGET), $env);
     }
 
     /**
@@ -83,7 +59,7 @@ final class InstallCommandTest extends TestCase
 
     private function downloads(): int
     {
-        return count(array_filter($this->server?->log() ?? [], static fn (array $r): bool => str_ends_with($r['target'], '.tar.gz')));
+        return $this->served->downloads();
     }
 
     private function cacheRoot(): string
@@ -106,7 +82,7 @@ final class InstallCommandTest extends TestCase
         self::assertSame(0, $status, $err);
         self::assertSame($this->expectedPath() . "\n", $out);
         self::assertSame('Installed Dynoxide 1.7.0.' . PHP_EOL, $err);
-        self::assertSame($this->binaryHash, hash_file('sha256', $this->expectedPath()));
+        self::assertSame($this->served->binaryHash, hash_file('sha256', $this->expectedPath()));
         self::assertSame(1, $this->downloads());
     }
 
