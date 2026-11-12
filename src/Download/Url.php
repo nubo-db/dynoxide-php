@@ -54,6 +54,13 @@ final class Url
         ];
     }
 
+    /**
+     * Whether a host is this machine: localhost, ::1 or an address in
+     * 127.0.0.0/8, with or without the brackets an IPv6 address has in a URL.
+     *
+     * @api Framework integrations use this to judge an address a server is
+     * bound to, so it stays as it is within a major version.
+     */
     public static function isLoopback(string $host): bool
     {
         $host = strtolower(trim($host, '[]'));

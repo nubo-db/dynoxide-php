@@ -6,7 +6,9 @@ namespace Dynoxide\PHPUnit;
 
 use Dynoxide\Dynoxide;
 use Dynoxide\Exception\DynoxideException;
+use Dynoxide\Exception\StartException;
 use Dynoxide\Options;
+use Dynoxide\Parallel;
 use Dynoxide\Server;
 use PHPUnit\Event\EventFacadeIsSealedException;
 use PHPUnit\Runner\Extension\Extension as PhpunitExtension;
@@ -36,6 +38,12 @@ final class Extension implements PhpunitExtension
 {
     private const PARAMETERS = ['binary', 'binary-from-path', 'db-path', 'schema', 'timeout'];
 
+    /**
+     * This process's session. PHPUnit bootstraps an extension once per
+     * process, before any test runs.
+     */
+    private static ?Session $session = null;
+
     public function bootstrap(Configuration $configuration, Facade $facade, ParameterCollection $parameters): void
     {
         $base = $configuration->hasConfigurationFile() ? dirname($configuration->configurationFile()) : (string) getcwd();
@@ -53,7 +61,27 @@ final class Extension implements PhpunitExtension
             // The ParaTest parent, which Pest --parallel also runs, loads
             // extensions after the events are sealed. It runs no tests, so it
             // needs no server; its workers each start their own.
+            return;
         }
+        self::$session = $session;
+    }
+
+    /**
+     * The server this extension started in this process, for code that runs
+     * inside the tests and wants it rather than the environment, such as a
+     * framework integration that would otherwise start a second one.
+     *
+     * Null when the extension isn't loaded in this process (a test run in a
+     * separate process doesn't load it), before the tests start, and after
+     * they've finished.
+     *
+     * @throws StartException the failure, when the server was meant to start
+     *         and couldn't. The tests' environment then points at a port where
+     *         nothing listens.
+     */
+    public static function server(): ?Server
+    {
+        return self::$session?->server();
     }
 
     /**
@@ -83,7 +111,7 @@ final class Extension implements PhpunitExtension
             $options = new Options(
                 binary: $binary,
                 binaryFromPath: $fromPath,
-                dbPath: $dbPath === null ? null : self::workerDatabase($dbPath),
+                dbPath: $dbPath === null ? null : Parallel::workerDatabase($dbPath),
                 schema: $schema,
                 startTimeout: (float) $timeout,
                 log: $log,
@@ -94,31 +122,6 @@ final class Extension implements PhpunitExtension
 
             return $start($options);
         };
-    }
-
-    /**
-     * The database file for this process: the one given, or in a ParaTest
-     * worker (Pest --parallel included) that file with the worker's number
-     * appended, since two servers can't share one file. ParaTest sets
-     * PARATEST in every worker; TEST_TOKEN alone is a common name for
-     * unrelated secrets, so it counts only alongside PARATEST.
-     */
-    private static function workerDatabase(string $dbPath): string
-    {
-        $paratest = getenv('PARATEST');
-        if ($paratest === false || $paratest === '') {
-            return $dbPath;
-        }
-        $token = getenv('TEST_TOKEN');
-        if ($token === false || preg_match('/^\d+$/', $token) !== 1) {
-            throw new DynoxideException(
-                'ParaTest is running without worker numbers (TEST_TOKEN), as with --no-test-tokens, so its workers '
-                . "can't each have their own database file and would share {$dbPath}. Run without --no-test-tokens, "
-                . 'or without the db-path parameter.',
-            );
-        }
-
-        return "{$dbPath}-{$token}";
     }
 
     /** @return array<string, string> */

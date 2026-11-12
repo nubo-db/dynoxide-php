@@ -254,6 +254,39 @@ Dynoxide 1.6.x works, with two differences. The package finds out it's ready
 by polling it rather than from the line 1.7.0 prints, and it doesn't stop when
 the run is killed (see [above](#when-a-run-is-killed)).
 
+## Building on this package
+
+A framework integration, or a command that runs Dynoxide itself, can reuse
+what the package already does rather than copying it.
+
+`Dynoxide::locate()` finds the binary `start()` would run, in the same order
+(the `binary` option, `binaryFromPath`, `DYNOXIDE_BINARY`, then the verified
+download), and downloads it if it has to. It takes the same options as
+`start()` and returns a `Dynoxide\Binary\LocatedBinary`:
+
+```php
+use Dynoxide\Dynoxide;
+
+$binary = Dynoxide::locate();
+
+$binary->path;          // the absolute path to run
+$binary->source;        // a Dynoxide\Binary\Source case: Option, Path, Environment, Cache or Download
+$binary->version;       // what it reports, such as 1.7.0
+$binary->launcherFlags; // false for 1.6.x, which predates --ready-json and --exit-with-parent
+```
+
+`Dynoxide\Parallel::workerDatabase($path)` is the rule the extension uses
+for `db-path` under ParaTest: it returns the path unchanged outside a
+ParaTest worker, appends the worker's number inside one, and throws under
+`--no-test-tokens`.
+
+`Dynoxide\PHPUnit\Extension::server()` returns the server the extension
+started in this process, so code running inside a test can use it rather
+than start a second one. It's null when the extension isn't loaded, before
+the tests start and after they finish. A test run in a separate process
+doesn't load the extension, so gets null too. If the server was meant to
+start and couldn't, it throws the `StartException` the run failed with.
+
 ## Licence
 
 Dual-licensed under either of [MIT](LICENSE-MIT) or

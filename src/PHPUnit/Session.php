@@ -24,6 +24,8 @@ final class Session
 
     private ?Server $server = null;
 
+    private ?StartException $failure = null;
+
     /** @param \Closure(): Server $start */
     public function __construct(private readonly \Closure $start)
     {
@@ -48,7 +50,7 @@ final class Session
             $this->server = ($this->start)();
         } catch (\Throwable $e) {
             AwsEnvironment::export(self::NOWHERE);
-            throw new StartException(
+            throw $this->failure = new StartException(
                 "Dynoxide didn't start, so this run's DynamoDB calls go to " . self::NOWHERE . ', where nothing is listening. '
                 . $e->getMessage(),
                 0,
@@ -56,6 +58,20 @@ final class Session
             );
         }
         $this->server->exportEnv();
+    }
+
+    /**
+     * The running server, or null before the start and after the stop.
+     *
+     * @throws StartException the failure, if the start failed
+     */
+    public function server(): ?Server
+    {
+        if ($this->failure !== null) {
+            throw $this->failure;
+        }
+
+        return $this->server;
     }
 
     public function stop(): void

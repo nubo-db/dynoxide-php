@@ -6,6 +6,7 @@ namespace Dynoxide\Tests\Unit\PHPUnit;
 
 use Dynoxide\Exception\StartException;
 use Dynoxide\Options;
+use Dynoxide\PHPUnit\Extension;
 use Dynoxide\PHPUnit\Session;
 use Dynoxide\Server;
 use Dynoxide\Tests\Support\FakeServer;
@@ -34,6 +35,7 @@ final class SessionTest extends TestCase
 
     protected function tearDown(): void
     {
+        self::loadExtension(null);
         foreach ($this->saved as $name => [$env, $envArray, $server]) {
             putenv($env === false ? $name : "{$name}={$env}");
             unset($_ENV[$name], $_SERVER[$name]);
@@ -120,5 +122,60 @@ final class SessionTest extends TestCase
         $session->stop();
 
         self::assertSame(1, $this->starts);
+    }
+
+    /**
+     * What bootstrap() does with the session, without PHPUnit's runner, or
+     * with null, as in a process where the extension isn't loaded.
+     */
+    private static function loadExtension(?Session $session): void
+    {
+        \Closure::bind(static function () use ($session): void {
+            self::$session = $session;
+        }, null, Extension::class)();
+    }
+
+    public function testTheExtensionHasNoServerWhenItIsNotLoaded(): void
+    {
+        self::loadExtension(null);
+
+        self::assertNull(Extension::server());
+    }
+
+    public function testTheExtensionHandsOutItsServerWhileItRuns(): void
+    {
+        $session = new Session($this->fake());
+        self::loadExtension($session);
+        self::assertNull(Extension::server(), 'not started yet');
+
+        $session->start();
+        self::assertNotNull($this->started);
+        self::assertSame($this->started, Extension::server());
+
+        $session->stop();
+        self::assertNull(Extension::server(), 'stopped');
+    }
+
+    public function testTheExtensionThrowsTheFailureOfAStartThatFailed(): void
+    {
+        $session = new Session($this->failing());
+        self::loadExtension($session);
+        try {
+            $session->start();
+            self::fail('expected the start to fail');
+        } catch (StartException $thrown) {
+        }
+
+        foreach ([1, 2] as $_) {
+            try {
+                Extension::server();
+                self::fail('expected the recorded failure');
+            } catch (StartException $e) {
+                self::assertSame($thrown, $e);
+            }
+        }
+        $session->stop();
+        $this->expectExceptionObject($thrown);
+        Extension::server();
     }
 }

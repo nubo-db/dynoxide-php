@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Dynoxide\Tests\Support;
 
+use Dynoxide\PHPUnit\Extension;
+
 /**
  * Used by the tests in tests/Fixtures/projects: records what one test saw,
  * as a JSON line in the file FIXTURE_REPORT names, for the test that ran the
@@ -15,7 +17,7 @@ final class FixtureReport
      * Requests get ten seconds, since a first request to a server on a cold
      * Windows runner can be slow; a refused connection still fails at once.
      *
-     * @return array{label: string, pid: int, token: string, endpoint: string, status: int, error: string, tables: list<string>}
+     * @return array{label: string, pid: int, token: string, endpoint: string, status: int, error: string, tables: list<string>, extension: string}
      */
     public static function record(string $label, ?string $table = null): array
     {
@@ -46,6 +48,7 @@ final class FixtureReport
             'status' => $status,
             'error' => $error,
             'tables' => $tables,
+            'extension' => self::extension(),
         ];
         file_put_contents((string) getenv('FIXTURE_REPORT'), json_encode($report) . "\n", FILE_APPEND | LOCK_EX);
         // For the hard-kill tests: hold the test open so the runner can be
@@ -56,5 +59,15 @@ final class FixtureReport
         }
 
         return $report;
+    }
+
+    /** What Extension::server() gives: the server's endpoint, "none", or the class it threw. */
+    private static function extension(): string
+    {
+        try {
+            return Extension::server()?->endpoint ?? 'none';
+        } catch (\Throwable $e) {
+            return 'threw ' . $e::class;
+        }
     }
 }

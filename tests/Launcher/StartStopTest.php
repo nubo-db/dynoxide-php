@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dynoxide\Tests\Launcher;
 
+use Dynoxide\Binary\Source;
 use Dynoxide\Dynoxide;
 use Dynoxide\Options;
 use Dynoxide\Server;
@@ -143,6 +144,34 @@ final class StartStopTest extends TestCase
         );
         $server->stop();
         self::assertFalse($server->isRunning());
+    }
+
+    /** locate() finds the cached download where install() put it, without starting it. */
+    #[Group('embedded')]
+    public function testLocatesTheEmbeddedReleaseWhereInstallPutsIt(): void
+    {
+        if (getenv('DYNOXIDE_TEST_DOWNLOAD') !== '1') {
+            self::markTestSkipped('Set DYNOXIDE_TEST_DOWNLOAD=1 to download the embedded release.');
+        }
+        $this->setEnv('DYNOXIDE_BINARY', '');
+        $installed = Dynoxide::install();
+
+        $found = Dynoxide::locate();
+
+        self::assertSame(
+            [$installed, Source::Cache, \Dynoxide\Release::VERSION, version_compare(\Dynoxide\Release::VERSION, '1.7.0', '>=')],
+            [$found->path, $found->source, $found->version, $found->launcherFlags],
+        );
+    }
+
+    public function testLocatesTheBinaryItWouldStart(): void
+    {
+        $found = Dynoxide::locate(['binary' => $this->binary()]);
+
+        self::assertSame([$this->binary(), Source::Option, true], [$found->path, $found->source, $found->launcherFlags]);
+        self::assertMatchesRegularExpression('/^\d+\.\d+\.\d+/', $found->version);
+        $this->start();
+        self::assertStringContainsString("Dynoxide {$found->version} at {$found->path}", $this->logged[0]);
     }
 
     public function testStartsWithAnEncryptionKeyInTheEnvironment(): void

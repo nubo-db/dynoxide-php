@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dynoxide\Tests\Launcher;
 
+use Dynoxide\Exception\StartException;
 use Dynoxide\Process\ProcessTree;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\Group;
@@ -55,6 +56,7 @@ final class PHPUnitExtensionTest extends TestCase
         self::assertMatchesRegularExpression('#^http://127\.0\.0\.1:\d+$#', $endpoints[0]);
         self::assertSame([200], array_values(array_unique(array_column($reports, 'status'))));
         self::assertSame(1, substr_count($output, ', listening on '), $output);
+        self::assertTheExtensionHandsOutTheServer($reports);
         self::assertAllStopped($endpoints);
     }
 
@@ -100,6 +102,7 @@ final class PHPUnitExtensionTest extends TestCase
         self::assertSame(['a', 'b', 'c'], self::labels($reports));
         self::assertCount(1, array_unique(array_column($reports, 'endpoint')));
         self::assertSame([200], array_values(array_unique(array_column($reports, 'status'))));
+        self::assertTheExtensionHandsOutTheServer($reports);
         self::assertAllStopped(array_unique(array_column($reports, 'endpoint')));
     }
 
@@ -295,7 +298,22 @@ final class PHPUnitExtensionTest extends TestCase
             $endpoints[] = $seen[0];
         }
         self::assertCount(count($byToken), array_unique($endpoints), 'and no two workers shared one');
+        self::assertTheExtensionHandsOutTheServer($reports);
         self::assertAllStopped($endpoints);
+    }
+
+    /**
+     * Extension::server() is the server the environment points at, in every
+     * process that ran the extension. A test run in a separate process
+     * doesn't run it, so has none.
+     *
+     * @param list<array{label: string, endpoint: string, extension: string}> $reports
+     */
+    private static function assertTheExtensionHandsOutTheServer(array $reports): void
+    {
+        foreach ($reports as $report) {
+            self::assertSame($report['label'] === 'isolated' ? 'none' : $report['endpoint'], $report['extension'], json_encode($report) ?: '');
+        }
     }
 
     /** @param list<array{endpoint: string, status: int}> $reports */
@@ -304,6 +322,9 @@ final class PHPUnitExtensionTest extends TestCase
         foreach ($reports as $report) {
             self::assertSame('http://127.0.0.1:1', $report['endpoint']);
             self::assertSame(0, $report['status'], 'nothing answered');
+            if ($report['label'] !== 'isolated') {
+                self::assertSame('threw ' . StartException::class, $report['extension'], 'the extension hands out the failure');
+            }
         }
     }
 
