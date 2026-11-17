@@ -228,13 +228,18 @@ final class HardKillTest extends TestCase
         touch($report);
         $env = $this->childEnv(['FIXTURE_REPORT' => $report, 'FIXTURE_HOLD' => (string) $holdSeconds]);
 
+        // One handle for both streams, so they share a file position. Two
+        // handles opened in append mode write over each other on Windows.
+        $outputHandle = fopen("{$dir}/output.txt", 'a');
+        self::assertIsResource($outputHandle);
         $process = proc_open(
             [PHP_BINARY, $script, '-c', "{$dir}/phpunit.xml", '--colors=never', ...$args],
-            [0 => ['pipe', 'r'], 1 => ['file', "{$dir}/output.txt", 'a'], 2 => ['file', "{$dir}/output.txt", 'a']],
+            [0 => ['pipe', 'r'], 1 => $outputHandle, 2 => $outputHandle],
             $pipes,
             realpath(self::ROOT) ?: self::ROOT,
             $env,
         );
+        fclose($outputHandle);
         self::assertIsResource($process);
         $this->processes[] = $process;
 

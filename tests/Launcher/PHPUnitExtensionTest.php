@@ -236,14 +236,18 @@ final class PHPUnitExtensionTest extends TestCase
         }
         $childEnv = array_merge($childEnv, $this->binaryEnv, ['FIXTURE_REPORT' => $report], $env);
 
+        // One handle for both streams, so they share a file position. Two
+        // handles opened in append mode write over each other on Windows.
+        $outputHandle = fopen($output, 'a');
+        self::assertIsResource($outputHandle);
         $process = proc_open(
             [PHP_BINARY, $script, '-c', $config, '--colors=never', ...$args],
-            // Both in append mode, so neither writes over the other.
-            [0 => ['pipe', 'r'], 1 => ['file', $output, 'a'], 2 => ['file', $output, 'a']],
+            [0 => ['pipe', 'r'], 1 => $outputHandle, 2 => $outputHandle],
             $pipes,
             self::path(self::ROOT),
             $childEnv,
         );
+        fclose($outputHandle);
         self::assertIsResource($process);
         fclose($pipes[0]);
         // FIXTURE_DEADLINE shortens the wait, to check what a timeout leaves.
