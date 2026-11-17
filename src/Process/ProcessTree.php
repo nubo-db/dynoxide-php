@@ -136,7 +136,7 @@ final class ProcessTree
     /** Kills the process and everything it started, on Windows. */
     public static function killOnWindows(int $pid): void
     {
-        if (self::canExec()) {
+        if (function_exists('exec')) {
             @exec('taskkill /T /F /PID ' . $pid . ' 2>NUL');
         }
     }
@@ -246,9 +246,13 @@ final class ProcessTree
         }
     }
 
-    /** exec() can be disabled, and calling it then throws rather than failing. */
+    /**
+     * Whether the ps, pgrep and kill commands can run: not on Windows, where
+     * cmd can't open /dev/null and says so on stderr, and not with exec()
+     * disabled, when calling it throws rather than failing.
+     */
     private static function canExec(): bool
     {
-        return function_exists('exec');
+        return PHP_OS_FAMILY !== 'Windows' && function_exists('exec');
     }
 }

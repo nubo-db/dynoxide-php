@@ -81,6 +81,31 @@ final class StartStopTest extends TestCase
         self::assertLessThan(2.5, microtime(true) - $started, 'well within the 5 second grace period');
     }
 
+    /**
+     * A test run in a separate process fails when that process writes to
+     * stderr, so starting and stopping a server must write nothing there.
+     */
+    public function testStartingAndStoppingWritesNothingToStderr(): void
+    {
+        $script = $this->tempDir() . DIRECTORY_SEPARATOR . 'start-stop.php';
+        file_put_contents($script, '<?php
+            require ' . var_export(dirname(__DIR__, 2) . '/vendor/autoload.php', true) . ';
+            $server = Dynoxide\Dynoxide::start(new Dynoxide\Options(binary: $argv[1], log: static function (): void {
+            }));
+            exit($server->stop());
+        ');
+        $process = proc_open([PHP_BINARY, $script, $this->binary()], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process);
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        self::assertSame(0, proc_close($process), $stdout . $stderr);
+        self::assertSame('', $stderr);
+    }
+
     public function testTwoServersGetTheirOwnPortsAndStopApart(): void
     {
         $a = $this->start();
