@@ -7,8 +7,6 @@ port for as long as your test run needs one. No Docker or Java is involved,
 and it needs nothing beyond PHP's own `zlib` and `openssl` extensions (and
 `zip` on Windows).
 
-This package is under development and hasn't been released yet.
-
 ## Install
 
 ```sh
