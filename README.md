@@ -20,7 +20,8 @@ silicon) or Windows (x86_64). On Windows it also needs `ext-zip` to unpack the
 download, and says so if it's missing.
 
 The package is versioned in step with Dynoxide: version 1.7.0 of this package
-runs Dynoxide 1.7.0, and carries that release's checksums.
+runs Dynoxide 1.7.0, and carries that release's checksums. A fix to the
+package alone adds a fourth part, so 1.7.0.1 still runs Dynoxide 1.7.0.
 
 ## With PHPUnit
 

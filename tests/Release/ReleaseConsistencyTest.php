@@ -26,7 +26,13 @@ final class ReleaseConsistencyTest extends TestCase
             self::markTestSkipped('Set DYNOXIDE_RELEASE_TAG to the tag about to be pushed.');
         }
 
-        self::assertSame(Release::TAG, $tag, "The tag must be the Dynoxide release src/Release.php embeds; run scripts/update-release.php {$tag}.");
+        // A fix to the package alone adds a fourth part: v1.7.0.1 still embeds v1.7.0.
+        self::assertMatchesRegularExpression(
+            '/^' . preg_quote(Release::TAG, '/') . '(\.[1-9]\d*)?$/',
+            $tag,
+            'The tag must be the Dynoxide release src/Release.php embeds (' . Release::TAG . '), with a fourth part only '
+            . "for a fix to the package alone; for a new Dynoxide release, run scripts/update-release.php {$tag}.",
+        );
     }
 
     public function testTheEmbeddedTagAndVersionAgree(): void

@@ -5,6 +5,17 @@ runs Dynoxide 1.7.0.
 
 ## [Unreleased]
 
+## [1.7.0.1] - 2026-11-17
+
+Still runs Dynoxide 1.7.0. A fourth version part marks a fix to the package
+alone.
+
+### Fixed
+
+- Starting a server on Windows no longer writes "The system cannot find the
+  path specified." to stderr, which failed any test run in a separate
+  process.
+
 ## [1.7.0] - 2026-11-17
 
 - First release: start Dynoxide from PHP tests, with a PHPUnit extension.
