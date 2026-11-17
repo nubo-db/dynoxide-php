@@ -54,12 +54,7 @@ jobs:
         run: vendor/bin/phpunit --testsuite release --group release-gate --fail-on-skipped --fail-on-empty-test-suite
 
   # Every leg again, with the embedded hashes checked against the release's
-  # assets and the launcher suite run on the release's own binaries. No
-  # secrets are passed: release mode doesn't need the staging token, and
-  # without it a run that lost release: true fails rather than quietly
-  # testing a staging build.
+  # assets and the launcher suite run on the release's own binaries.
   matrix:
     needs: consistency
     uses: ./.github/workflows/ci.yml
-    with:
-      release: true

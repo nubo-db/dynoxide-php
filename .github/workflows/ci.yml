@@ -5,30 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-    inputs:
-      release:
-        description: Run the launcher tests on the embedded release, as the release check does
-        type: boolean
-        default: false
-  # The release workflow runs the whole matrix again before a tag, with the
-  # launcher tests on the release's own binaries rather than a staging build.
+  # The release workflow runs the whole matrix again before a tag.
   workflow_call:
-    inputs:
-      release:
-        type: boolean
-        default: false
 
 permissions:
   contents: read
-
-# The launcher tests need a Dynoxide 1.7.0 build. Until the engine release
-# exists, it comes from the private staging repo's Test Build for this commit
-# of the engine branch, read with DYNOXIDE_STAGING_TOKEN.
-env:
-  ENGINE_REPO: hicksy/dynoxide-staging
-  # Its Test Build ran on 10 November 2026, and the builds expire on
-  # 8 February 2027; run Test Build again before then.
-  ENGINE_COMMIT: 84cc8fe5ff8fb96279d2a8fb001529f6c966fe55
 
 jobs:
   test:
@@ -85,26 +66,20 @@ jobs:
           DYNOXIDE_CACHE_DIR: ${{ runner.temp }}/dynoxide-cache
         run: vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped ${{ matrix.no-pest && '--exclude-group pest' || '' }}
 
-      # The rest of the launcher suite against a 1.7.0 build: starting and
-      # stopping, hard kills and persistence. Before a release it's the
-      # release's own binary, installed and verified by bin/dynoxide (the root
-      # package's bin isn't linked into vendor/bin), and checked to be that
-      # version; otherwise a staging build. Skipping counts as failure.
-      - name: Launcher tests with the engine build
+      # The rest of the launcher suite against the embedded release: starting
+      # and stopping, hard kills and persistence. The binary is installed and
+      # verified by bin/dynoxide (the root package's bin isn't linked into
+      # vendor/bin), and checked to be that version. Skipping counts as
+      # failure.
+      - name: Launcher tests with the embedded release
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.DYNOXIDE_STAGING_TOKEN }}
         run: |
-          if [ "${{ inputs.release }}" = true ]; then
-            binary=$(php bin/dynoxide install)
-            expected="dynoxide $(php -r 'require "vendor/autoload.php"; echo Dynoxide\Release::VERSION;')"
-            actual=$("$binary" --version)
-            if [ "$actual" != "$expected" ]; then
-              echo "::error::$binary says \"$actual\", not \"$expected\""
-              exit 1
-            fi
-          else
-            binary=$(scripts/fetch-engine-build.sh "$ENGINE_REPO" "$ENGINE_COMMIT" "${{ matrix.target }}" "$RUNNER_TEMP/engine")
+          binary=$(php bin/dynoxide install)
+          expected="dynoxide $(php -r 'require "vendor/autoload.php"; echo Dynoxide\Release::VERSION;')"
+          actual=$("$binary" --version)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$binary says \"$actual\", not \"$expected\""
+            exit 1
           fi
           DYNOXIDE_TEST_BINARY="$binary" vendor/bin/phpunit --testsuite launcher --exclude-group embedded --fail-on-skipped
 
@@ -162,20 +137,14 @@ jobs:
         run: |
           su tester -s /bin/sh -c 'DYNOXIDE_TEST_DOWNLOAD=1 DYNOXIDE_CACHE_DIR=/tmp/dynoxide-cache DYNOXIDE_TEST_COMPOSER="php84 /usr/bin/composer.phar" php84 vendor/bin/phpunit --testsuite launcher --group embedded --fail-on-skipped'
 
-      - name: Launcher tests with the engine build
-        env:
-          GH_TOKEN: ${{ secrets.DYNOXIDE_STAGING_TOKEN }}
+      - name: Launcher tests with the embedded release
         run: |
-          if [ "${{ inputs.release }}" = true ]; then
-            binary=$(su tester -s /bin/sh -c 'php84 bin/dynoxide install')
-            expected="dynoxide $(php84 -r 'require "vendor/autoload.php"; echo Dynoxide\Release::VERSION;')"
-            actual=$("$binary" --version)
-            if [ "$actual" != "$expected" ]; then
-              echo "::error::$binary says \"$actual\", not \"$expected\""
-              exit 1
-            fi
-          else
-            binary=$(scripts/fetch-engine-build.sh "$ENGINE_REPO" "$ENGINE_COMMIT" x86_64-unknown-linux-musl /tmp/engine)
+          binary=$(su tester -s /bin/sh -c 'php84 bin/dynoxide install')
+          expected="dynoxide $(php84 -r 'require "vendor/autoload.php"; echo Dynoxide\Release::VERSION;')"
+          actual=$("$binary" --version)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$binary says \"$actual\", not \"$expected\""
+            exit 1
           fi
           su tester -s /bin/sh -c "DYNOXIDE_TEST_BINARY=$binary php84 vendor/bin/phpunit --testsuite launcher --exclude-group embedded --fail-on-skipped"
 
