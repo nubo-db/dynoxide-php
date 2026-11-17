@@ -5,6 +5,8 @@ runs Dynoxide 1.7.0.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-17
+
 - First release: start Dynoxide from PHP tests, with a PHPUnit extension.
 - `Dynoxide::locate()`, `Parallel::workerDatabase()` and
   `Extension::server()`, for framework integrations that build on the
