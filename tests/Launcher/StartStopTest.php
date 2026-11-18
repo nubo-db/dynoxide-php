@@ -6,6 +6,7 @@ namespace Dynoxide\Tests\Launcher;
 
 use Dynoxide\Binary\Source;
 use Dynoxide\Dynoxide;
+use Dynoxide\Exception\PortInUseException;
 use Dynoxide\Exception\StartException;
 use Dynoxide\Options;
 use Dynoxide\Server;
@@ -144,7 +145,11 @@ final class StartStopTest extends TestCase
                 $server = $this->start(port: $port);
                 break;
             } catch (StartException $e) {
-                if ($attempt >= 5 || !str_contains($e->getMessage(), "port {$port} is already in use")) {
+                // Something took the port between the probe and the start.
+                // A binary before 1.8.0 reports that only in its stderr tail.
+                $taken = $e instanceof PortInUseException
+                    || stripos($e->getMessage(), "port {$port} is already in use") !== false;
+                if ($attempt >= 5 || !$taken) {
                     throw $e;
                 }
             }

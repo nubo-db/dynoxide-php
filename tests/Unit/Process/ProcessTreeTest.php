@@ -45,6 +45,7 @@ final class ProcessTreeTest extends TestCase
                 clearstatcache();
             }
 
+            self::assertGreaterThan($count, count(ProcessTree::of($pid)), 'the walk stopped short of the whole tree');
             ProcessTree::kill($pid);
             usleep(500_000);
 

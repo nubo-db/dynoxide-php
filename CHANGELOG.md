@@ -11,16 +11,20 @@ runs Dynoxide 1.7.0.
   system still picks a free port. A fixed port is for dev setups where
   something needs the endpoint in advance. If the port is taken, `start()`
   throws the new `PortInUseException`, which extends `StartException` and
-  says which port in its `port` property. It reads that from the engine's
-  exit status, not its stderr. A port outside 0 to 65535 throws a
-  `DynoxideException` before anything starts, and so does a fixed port with
-  a binary older than 1.7.0. The PHPUnit extension stays on port 0.
+  holds the port in its `port` property. That needs Dynoxide 1.8.0, which
+  gives a taken port its own exit status; with an older binary a taken port
+  is a plain `StartException`, and its stderr lines name the port. A port
+  outside 0 to 65535 throws a `DynoxideException` before anything starts, and
+  so does a fixed port with a binary older than 1.7.0. The PHPUnit extension
+  stays on port 0.
 
 ### Fixed
 
 - **Stopping a server reaches every process its wrapper started.** The walk
   over a server's process tree stopped at 256 processes, so a wrapper that
-  had started more than that left the rest running after `stop()`.
+  had started more than that left the rest running after `stop()`. The walk
+  now has a ten-second limit instead, after which it kills everything it has
+  found.
 
 ### Changed
 

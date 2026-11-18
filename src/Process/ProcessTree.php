@@ -23,6 +23,9 @@ namespace Dynoxide\Process;
  */
 final class ProcessTree
 {
+    /** How long kill() keeps walking a tree before it kills what it has found. */
+    private const KILL_WALK_SECONDS = 10.0;
+
     /**
      * The process and everything below it, parents first, each with its
      * start time. Read it before signalling anything: once a parent dies its
@@ -93,8 +96,10 @@ final class ProcessTree
      * Kills the process and everything below it. Each is stopped (SIGSTOP)
      * before its children are read, so none can start another child between
      * the read and the kill. Every process in the tree is reached, however
-     * many there are: a cap on the walk would leave the rest running. Linux
-     * and macOS only.
+     * many there are: a cap on the count would leave the rest running. The
+     * walk does stop after KILL_WALK_SECONDS, so a tree that forks faster
+     * than it can be walked can't hold stop() for ever; whatever has been
+     * found by then is still killed. Linux and macOS only.
      */
     public static function kill(int $pid): void
     {
@@ -104,7 +109,8 @@ final class ProcessTree
         }
         $tree = [];
         $queue = [$pid => $start];
-        while ($queue !== []) {
+        $deadline = microtime(true) + self::KILL_WALK_SECONDS;
+        while ($queue !== [] && microtime(true) < $deadline) {
             $current = array_key_first($queue);
             $tree[$current] = $queue[$current];
             unset($queue[$current]);
@@ -119,7 +125,7 @@ final class ProcessTree
             // stopped if this is cut short.
             self::signal([$current => $tree[$current]], 9);
         }
-        self::signal($tree, 9);
+        self::signal($tree + $queue, 9);
     }
 
     /**
