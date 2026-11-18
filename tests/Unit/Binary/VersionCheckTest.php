@@ -138,7 +138,7 @@ final class VersionCheckTest extends TestCase
             while (FakeBinary::alive($pid) && microtime(true) < $deadline) {
                 usleep(50_000);
             }
-            self::assertFalse(FakeBinary::alive($pid), "the wrapper's child, {$pid}, is still running");
+            self::assertFalse(FakeBinary::alive($pid), "the wrapper's child, {$pid}, is still running: " . FakeBinary::describe($pid));
         } finally {
             FakeBinary::killIdentified($identified ?? []);
         }

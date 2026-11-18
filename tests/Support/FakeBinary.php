@@ -106,6 +106,24 @@ final class FakeBinary
         return $status === 0 && $state !== '' && $state[0] !== 'Z';
     }
 
+    /**
+     * A process's state and parent, for a failure message. A stopped process
+     * (T) was frozen but not killed; one still running under a new parent
+     * was never found.
+     */
+    public static function describe(int $pid): string
+    {
+        if (is_dir('/proc/self')) {
+            $stat = (string) @file_get_contents("/proc/{$pid}/stat");
+            $fields = explode(' ', substr($stat, (int) strrpos($stat, ')') + 2));
+
+            return 'state ' . ($fields[0] ?? '?') . ', parent ' . ($fields[1] ?? '?');
+        }
+        exec('ps -o stat= -o ppid= -p ' . $pid . ' 2>/dev/null', $lines);
+
+        return 'stat and parent ' . trim($lines[0] ?? '?');
+    }
+
     /** Kills a process left behind by a test that failed. */
     public static function kill(int $pid): void
     {
