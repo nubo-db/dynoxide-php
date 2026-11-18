@@ -26,6 +26,9 @@ final class ProcessTree
     /** How long kill() keeps walking a tree before it kills what it has found. */
     private const KILL_WALK_SECONDS = 10.0;
 
+    /** How long freeze() waits for a process to stop before going on. */
+    private const STOP_WAIT_SECONDS = 1.0;
+
     /**
      * The process and everything below it, parents first, each with its
      * start time. Read it before signalling anything: once a parent dies its
@@ -93,9 +96,9 @@ final class ProcessTree
     }
 
     /**
-     * Kills the process and everything below it. Each is stopped (SIGSTOP)
-     * before its children are read, so none can start another child between
-     * the read and the kill. Every process in the tree is reached, however
+     * Kills the process and everything below it. Each is stopped (SIGSTOP),
+     * and seen to have stopped, before its children are read, so none can
+     * start another child between the read and the kill. Every process in the tree is reached, however
      * many there are: a cap on the count would leave the rest running. The
      * walk does stop after KILL_WALK_SECONDS, so a tree that forks faster
      * than it can be walked can't hold stop() for ever; whatever has been
@@ -109,8 +112,9 @@ final class ProcessTree
         }
         $tree = [];
         $queue = [$pid => $start];
-        $deadline = microtime(true) + self::KILL_WALK_SECONDS;
-        while ($queue !== [] && microtime(true) < $deadline) {
+        // hrtime, unlike microtime, doesn't jump when the clock is changed.
+        $deadline = hrtime(true) + (int) (self::KILL_WALK_SECONDS * 1e9);
+        while ($queue !== [] && hrtime(true) < $deadline) {
             $current = array_key_first($queue);
             $tree[$current] = $queue[$current];
             unset($queue[$current]);
@@ -242,7 +246,11 @@ final class ProcessTree
 
     /**
      * Sends SIGSTOP, by name where its number isn't known: it differs between
-     * Linux, the BSDs and other systems.
+     * Linux, the BSDs and other systems. Then waits, for up to
+     * STOP_WAIT_SECONDS, until the process has stopped or gone. The signal
+     * only takes effect once a fork the process is in the middle of has
+     * finished, and the new child can appear after a read of the children
+     * that ran straight after the signal was sent.
      */
     private static function freeze(int $pid, string $start): void
     {
@@ -253,7 +261,34 @@ final class ProcessTree
             @posix_kill($pid, SIGSTOP);
         } elseif (self::canExec()) {
             @exec('kill -s STOP ' . $pid . ' 2>/dev/null');
+        } else {
+            return;
         }
+        $deadline = hrtime(true) + (int) (self::STOP_WAIT_SECONDS * 1e9);
+        while (!in_array(self::state($pid), [null, 'T', 't', 'Z'], true) && hrtime(true) < $deadline) {
+            usleep(1_000);
+        }
+    }
+
+    /**
+     * The first letter of the process's state (T when stopped), or null if
+     * it isn't running or can't be told.
+     */
+    private static function state(int $pid): ?string
+    {
+        if (is_dir('/proc/self')) {
+            $stat = self::quietly(static fn () => file_get_contents("/proc/{$pid}/stat"));
+
+            return $stat === false ? null : (substr($stat, (int) strrpos($stat, ')') + 2, 1) ?: null);
+        }
+        if (!self::canExec()) {
+            return null;
+        }
+        $out = [];
+        @exec('ps -o stat= -p ' . $pid . ' 2>/dev/null', $out);
+        $state = trim($out[0] ?? '');
+
+        return $state === '' ? null : $state[0];
     }
 
     /**

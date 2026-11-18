@@ -25,6 +25,11 @@ runs Dynoxide 1.7.0.
   had started more than that left the rest running after `stop()`. The walk
   now has a ten-second limit instead, after which it kills everything it has
   found.
+- **Stopping a server no longer misses a child started at that moment.** A
+  stop signal that reached a wrapper in the middle of starting a child let
+  that child appear after the wrapper's children had been read, so it was
+  left running. `stop()` now waits for each process to stop before reading
+  its children.
 - **No more warnings in Pest from the leftover sweep.** A `dynoxide-*`
   directory in the temp directory without an `owner.json` made Pest report a
   warning on every run that started Dynoxide, and on Linux so did a record

@@ -113,6 +113,9 @@ final class FakeBinary
      */
     public static function describe(int $pid): string
     {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return 'no state on Windows';
+        }
         if (is_dir('/proc/self')) {
             $stat = (string) @file_get_contents("/proc/{$pid}/stat");
             $fields = explode(' ', substr($stat, (int) strrpos($stat, ')') + 2));
