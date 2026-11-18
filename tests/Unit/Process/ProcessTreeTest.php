@@ -16,20 +16,26 @@ final class ProcessTreeTest extends TestCase
     use TempDir;
 
     /**
-     * A tree bigger than any fixed limit on the walk is killed whole. The
-     * children are started up front and left running, so the size is certain
-     * and timing plays no part.
+     * A tree bigger than any fixed limit on the walk is killed whole, down to
+     * the grandchildren, and well inside the walk's time limit: one cut short
+     * kills what it has found but not the children of what it hasn't walked.
+     * The tree is started up front and left running, so its size is certain.
      */
     public function testKillReachesEveryChildOfALargeTree(): void
     {
         $dir = $this->tempDir();
         $log = $dir . '/children';
-        $count = 300;
+        // Each child starts a grandchild that logs itself: 301 processes.
+        $count = 150;
+        file_put_contents($dir . '/child.sh', <<<'SH'
+            sh -c 'echo $$ >> "$1"; exec sleep 30' sh "$1" &
+            wait
+            SH);
         $script = $dir . '/many.sh';
         file_put_contents($script, <<<SH
             i=0
             while [ \$i -lt {$count} ]; do
-                sh -c 'echo \$\$ >> "\$1"; exec sleep 30' sh {$log} &
+                sh {$dir}/child.sh {$log} &
                 i=\$((i + 1))
             done
             wait
@@ -45,8 +51,11 @@ final class ProcessTreeTest extends TestCase
                 clearstatcache();
             }
 
-            self::assertGreaterThan($count, count(ProcessTree::of($pid)), 'the walk stopped short of the whole tree');
+            self::assertGreaterThan(2 * $count, count(ProcessTree::of($pid)), 'the walk stopped short of the whole tree');
+            $started = hrtime(true);
             ProcessTree::kill($pid);
+            $seconds = (hrtime(true) - $started) / 1e9;
+            self::assertLessThan(5.0, $seconds, 'the walk ran close to its ten-second limit');
             usleep(500_000);
 
             $children = array_map('intval', file($log, FILE_IGNORE_NEW_LINES) ?: []);
@@ -97,6 +106,12 @@ final class ProcessTreeTest extends TestCase
                 clearstatcache();
             }
 
+            // The tree is read once, so a wrapper that's still starting
+            // children can't keep the read going.
+            $started = hrtime(true);
+            ProcessTree::of($pid);
+            self::assertLessThan(3.0, (hrtime(true) - $started) / 1e9, 'reading the tree kept up with the wrapper');
+
             ProcessTree::kill($pid);
             usleep(500_000);
 
@@ -120,7 +135,9 @@ final class ProcessTreeTest extends TestCase
      * the children were read. Forking without a pause makes that likely
      * within a few rounds. Each child waits before it logs itself, so the
      * forking isn't slowed down, and only a child that was missed lives long
-     * enough to log.
+     * enough to log. Any process still running that names the test's
+     * directory counts as well, so a child that was stopped but never killed
+     * is a survivor too, without the forking being slowed to log it.
      */
     public function testKillCatchesAChildForkedAsTheWrapperIsStopped(): void
     {
@@ -132,9 +149,7 @@ final class ProcessTreeTest extends TestCase
             : '$kept[] = proc_open(' . var_export([PHP_BINARY, '-r', 'usleep(300_000); file_put_contents(' . $log . ', getmypid() . PHP_EOL, FILE_APPEND | LOCK_EX); sleep(20);'], true) . ', [], $pipes);';
         file_put_contents($script, "<?php\n\$kept = [];\nfor (\$i = 0; \$i < 400; \$i++) { {$fork} }\nsleep(20);\n");
 
-        // Without /proc each process walked costs a few ps calls, so a round
-        // takes seconds; there, two rounds only check nothing else broke.
-        $rounds = is_dir('/proc/self') ? 15 : 2;
+        $rounds = 15;
         $survivors = [];
         try {
             for ($round = 0; $round < $rounds && $survivors === []; $round++) {
@@ -143,23 +158,55 @@ final class ProcessTreeTest extends TestCase
                 self::assertIsResource($wrapper);
                 usleep(random_int(30_000, 90_000));
 
-                ProcessTree::kill((int) proc_get_status($wrapper)['pid']);
+                $wrapperPid = (int) proc_get_status($wrapper)['pid'];
+                ProcessTree::kill($wrapperPid);
                 usleep(500_000);
 
                 $deadline = microtime(true) + 1;
                 do {
                     usleep(20_000);
                     clearstatcache();
-                    $children = array_map('intval', @file($dir . '/children', FILE_IGNORE_NEW_LINES) ?: []);
+                    $children = array_diff(array_unique(array_merge(
+                        array_map('intval', @file($dir . '/children', FILE_IGNORE_NEW_LINES) ?: []),
+                        self::runningWithArgument($dir),
+                    )), [$wrapperPid]);
                     $survivors = array_values(array_filter($children, static fn (int $c): bool => FakeBinary::alive($c)));
                 } while ($survivors !== [] && microtime(true) < $deadline);
+                // A wrapper left stopped would hold proc_close() for ever.
+                proc_terminate($wrapper, 9);
                 proc_close($wrapper);
             }
-            self::assertSame([], $survivors, 'a child survived in round ' . $round);
+            self::assertSame([], $survivors, 'a child survived in round ' . $round . ': ' . implode(', ', array_map(static fn (int $c): string => $c . ' (' . FakeBinary::describe($c) . ')', $survivors)));
         } finally {
             foreach ($survivors as $c) {
                 FakeBinary::kill($c);
             }
         }
+    }
+
+    /**
+     * Every live process whose command line contains $text.
+     *
+     * @return list<int>
+     */
+    private static function runningWithArgument(string $text): array
+    {
+        $pids = [];
+        if (is_dir('/proc/self')) {
+            foreach (scandir('/proc') ?: [] as $entry) {
+                if (ctype_digit($entry) && str_contains((string) @file_get_contents("/proc/{$entry}/cmdline"), $text)) {
+                    $pids[] = (int) $entry;
+                }
+            }
+        } else {
+            exec('ps -A -ww -o pid= -o command= 2>/dev/null', $lines);
+            foreach ($lines as $line) {
+                if (str_contains($line, $text)) {
+                    $pids[] = (int) $line;
+                }
+            }
+        }
+
+        return array_values(array_filter($pids, static fn (int $pid): bool => $pid !== getmypid() && FakeBinary::alive($pid)));
     }
 }

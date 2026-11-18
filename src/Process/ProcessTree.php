@@ -26,34 +26,30 @@ final class ProcessTree
     /** How long kill() keeps walking a tree before it kills what it has found. */
     private const KILL_WALK_SECONDS = 10.0;
 
-    /** How long freeze() waits for a process to stop before going on. */
+    /** How long kill() waits for a level of the tree to stop before going on. */
     private const STOP_WAIT_SECONDS = 1.0;
 
     /**
      * The process and everything below it, parents first, each with its
      * start time. Read it before signalling anything: once a parent dies its
-     * children are re-parented and can't be found from it. There's no limit
-     * on its size: each process is read once, so the walk always ends. Linux
-     * and macOS only.
+     * children are re-parented and can't be found from it. It's walked from
+     * one reading of the process table, so it ends however fast the tree
+     * forks, and there's no limit on its size. Linux and macOS only.
      *
      * @return array<int, string> process ID to start time
      */
     public static function of(int $pid): array
     {
-        $start = self::startTime($pid);
-        if ($start === null) {
+        $table = self::table();
+        $start = $table[$pid][2] ?? null;
+        if ($start === null || $table[$pid][1] === 'Z') {
             return [];
         }
         $tree = [$pid => $start];
-        $children = self::childrenByParent();
-        $queue = [$pid];
-        while ($queue !== []) {
-            foreach ($children === null ? self::pgrepChildren(array_shift($queue)) : ($children[array_shift($queue)] ?? []) as $child) {
-                if (!isset($tree[$child]) && ($childStart = self::startTime($child)) !== null) {
-                    $tree[$child] = $childStart;
-                    $queue[] = $child;
-                }
-            }
+        $level = [$pid => $start];
+        while ($level !== []) {
+            $level = array_diff_key(self::childrenIn($table, $level), $tree);
+            $tree += $level;
         }
 
         return $tree;
@@ -96,40 +92,36 @@ final class ProcessTree
     }
 
     /**
-     * Kills the process and everything below it. Each is stopped (SIGSTOP),
-     * and seen to have stopped, before its children are read, so none can
-     * start another child between the read and the kill. Every process in the tree is reached, however
-     * many there are: a cap on the count would leave the rest running. The
-     * walk does stop after KILL_WALK_SECONDS, so a tree that forks faster
-     * than it can be walked can't hold stop() for ever; whatever has been
-     * found by then is still killed. Linux and macOS only.
+     * Kills the process and everything below it, a level of the tree at a
+     * time. Each level is stopped (SIGSTOP), and seen to have stopped, before
+     * its children are read, so none can start another child between the
+     * read and the kill. There's no limit on the tree's size. The walk does
+     * stop after KILL_WALK_SECONDS, so a tree that forks faster than it can
+     * be walked can't hold stop() for ever, and whatever has been found by
+     * then is still killed. Linux and macOS only.
      */
     public static function kill(int $pid): void
     {
-        $start = self::startTime($pid);
+        $table = self::table();
+        $start = $table[$pid][2] ?? null;
         if ($start === null) {
             return;
         }
-        $tree = [];
-        $queue = [$pid => $start];
+        $found = [];
+        $level = [$pid => $start];
         // hrtime, unlike microtime, doesn't jump when the clock is changed.
         $deadline = hrtime(true) + (int) (self::KILL_WALK_SECONDS * 1e9);
-        while ($queue !== [] && hrtime(true) < $deadline) {
-            $current = array_key_first($queue);
-            $tree[$current] = $queue[$current];
-            unset($queue[$current]);
-            self::freeze($current, $tree[$current]);
-            $children = self::childrenByParent();
-            foreach ($children === null ? self::pgrepChildren($current) : ($children[$current] ?? []) as $child) {
-                if (!isset($tree[$child]) && ($childStart = self::startTime($child)) !== null) {
-                    $queue[$child] = $childStart;
-                }
-            }
-            // Its children are known, so it can go now: nothing is left
+        while ($level !== [] && hrtime(true) < $deadline) {
+            $found += $level;
+            self::send($level, 'STOP', $table);
+            $table = self::stopped($level);
+            $next = array_diff_key(self::childrenIn($table, $level), $found);
+            // Their children are known, so they can go now: nothing is left
             // stopped if this is cut short.
-            self::signal([$current => $tree[$current]], 9);
+            self::send($level, 'KILL', $table);
+            $level = $next;
         }
-        self::signal($tree + $queue, 9);
+        self::send($found + $level, 'KILL', self::table());
     }
 
     /**
@@ -187,43 +179,121 @@ final class ProcessTree
     }
 
     /**
-     * Every process's children, from /proc, or null without it.
+     * Every process, as its parent, the first letter of its state (T when
+     * stopped, Z for a zombie) and its start time: from /proc, or from one ps
+     * call without it. Empty when neither can be read.
      *
-     * @return array<int, list<int>>|null
+     * @return array<int, array{int, string, string}>
      */
-    private static function childrenByParent(): ?array
+    private static function table(): array
     {
-        if (!is_dir('/proc/self')) {
-            return null;
-        }
-        $children = [];
-        foreach (self::quietly(static fn () => scandir('/proc')) ?: [] as $entry) {
-            if (!ctype_digit($entry)) {
-                continue;
+        $table = [];
+        if (is_dir('/proc/self')) {
+            foreach (self::quietly(static fn () => scandir('/proc')) ?: [] as $entry) {
+                if (!ctype_digit($entry)) {
+                    continue;
+                }
+                // A process can exit between the listing and the read.
+                $stat = self::quietly(static fn () => file_get_contents("/proc/{$entry}/stat"));
+                if ($stat === false) {
+                    continue;
+                }
+                // The name in brackets can hold spaces; the fields after it don't.
+                $fields = explode(' ', substr($stat, (int) strrpos($stat, ')') + 2));
+                $table[(int) $entry] = [(int) ($fields[1] ?? 0), $fields[0] ?? 'Z', $fields[19] ?? ''];
             }
-            // A process can exit between the listing and the read.
-            $stat = self::quietly(static fn () => file_get_contents("/proc/{$entry}/stat"));
-            if ($stat === false) {
-                continue;
-            }
-            $fields = explode(' ', substr($stat, (int) strrpos($stat, ')') + 2));
-            $children[(int) ($fields[1] ?? 0)][] = (int) $entry;
+
+            return $table;
         }
-
-        return $children;
-    }
-
-    /** @return list<int> */
-    private static function pgrepChildren(int $pid): array
-    {
         if (!self::canExec()) {
             return [];
         }
         $out = [];
         $status = 1;
-        @exec('pgrep -P ' . $pid . ' 2>/dev/null', $out, $status);
+        // The same locale and time zone as startTime(), so the start times match.
+        @exec('LC_ALL=C TZ=UTC0 ps -A -o pid= -o ppid= -o stat= -o lstart= 2>/dev/null', $out, $status);
+        if ($status !== 0) {
+            return [];
+        }
+        foreach ($out as $line) {
+            if (preg_match('/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/', $line, $m) === 1) {
+                $table[(int) $m[1]] = [(int) $m[2], $m[3][0], $m[4]];
+            }
+        }
 
-        return $status === 0 ? array_map('intval', array_filter($out, static fn (string $l): bool => ctype_digit(trim($l)))) : [];
+        return $table;
+    }
+
+    /**
+     * The live children, with their start times, of the processes in
+     * $parents that are still the ones recorded.
+     *
+     * @param array<int, array{int, string, string}> $table
+     * @param array<int, string> $parents
+     * @return array<int, string>
+     */
+    private static function childrenIn(array $table, array $parents): array
+    {
+        $children = [];
+        foreach ($table as $pid => [$parent, $state, $start]) {
+            if ($state !== 'Z' && isset($parents[$parent]) && ($table[$parent][2] ?? null) === $parents[$parent]) {
+                $children[$pid] = $start;
+            }
+        }
+
+        return $children;
+    }
+
+    /**
+     * Sends SIGSTOP or SIGKILL to each process in $tree that $table shows is
+     * still the one recorded. SIGSTOP goes by name where its number isn't
+     * known: it differs between Linux, the BSDs and other systems.
+     *
+     * @param array<int, string> $tree
+     * @param array<int, array{int, string, string}> $table
+     */
+    private static function send(array $tree, string $signal, array $table): void
+    {
+        $pids = array_keys(array_filter($tree, static fn (string $start, int $pid): bool => ($table[$pid][2] ?? null) === $start && $table[$pid][1] !== 'Z', ARRAY_FILTER_USE_BOTH));
+        if ($pids === []) {
+            return;
+        }
+        $number = $signal === 'KILL' ? 9 : (defined('SIGSTOP') ? SIGSTOP : null);
+        if ($number !== null && function_exists('posix_kill')) {
+            foreach ($pids as $pid) {
+                @posix_kill($pid, $number);
+            }
+
+            return;
+        }
+        if (self::canExec()) {
+            @exec('kill -s ' . $signal . ' ' . implode(' ', $pids) . ' 2>/dev/null');
+        }
+    }
+
+    /**
+     * Waits, for up to STOP_WAIT_SECONDS, until every process in $tree has
+     * stopped, gone or been replaced, then reads the process table again. A
+     * stop signal only takes effect once a fork the process is in the middle
+     * of has finished, and the new child can appear after a read of the table
+     * made straight after the signal was sent. The read that sees the stop
+     * can't be used for the children either: on Linux it lists the processes
+     * before it reads their states, so a child can start between the two.
+     *
+     * @param array<int, string> $tree
+     * @return array<int, array{int, string, string}>
+     */
+    private static function stopped(array $tree): array
+    {
+        $deadline = hrtime(true) + (int) (self::STOP_WAIT_SECONDS * 1e9);
+        while (true) {
+            $table = self::table();
+            $waiting = array_filter($tree, static fn (string $start, int $pid): bool => ($table[$pid][2] ?? null) === $start && !in_array($table[$pid][1], ['T', 't', 'Z'], true), ARRAY_FILTER_USE_BOTH);
+            if ($waiting === [] || hrtime(true) >= $deadline) {
+                return self::table();
+            }
+            usleep(1_000);
+        }
     }
 
     /**
@@ -242,53 +312,6 @@ final class ProcessTree
         }
 
         return self::canExec() ? 'ps:' . php_uname('n') : null;
-    }
-
-    /**
-     * Sends SIGSTOP, by name where its number isn't known: it differs between
-     * Linux, the BSDs and other systems. Then waits, for up to
-     * STOP_WAIT_SECONDS, until the process has stopped or gone. The signal
-     * only takes effect once a fork the process is in the middle of has
-     * finished, and the new child can appear after a read of the children
-     * that ran straight after the signal was sent.
-     */
-    private static function freeze(int $pid, string $start): void
-    {
-        if (self::running([$pid => $start]) === []) {
-            return;
-        }
-        if (defined('SIGSTOP') && function_exists('posix_kill')) {
-            @posix_kill($pid, SIGSTOP);
-        } elseif (self::canExec()) {
-            @exec('kill -s STOP ' . $pid . ' 2>/dev/null');
-        } else {
-            return;
-        }
-        $deadline = hrtime(true) + (int) (self::STOP_WAIT_SECONDS * 1e9);
-        while (!in_array(self::state($pid), [null, 'T', 't', 'Z'], true) && hrtime(true) < $deadline) {
-            usleep(1_000);
-        }
-    }
-
-    /**
-     * The first letter of the process's state (T when stopped), or null if
-     * it isn't running or can't be told.
-     */
-    private static function state(int $pid): ?string
-    {
-        if (is_dir('/proc/self')) {
-            $stat = self::quietly(static fn () => file_get_contents("/proc/{$pid}/stat"));
-
-            return $stat === false ? null : (substr($stat, (int) strrpos($stat, ')') + 2, 1) ?: null);
-        }
-        if (!self::canExec()) {
-            return null;
-        }
-        $out = [];
-        @exec('ps -o stat= -p ' . $pid . ' 2>/dev/null', $out);
-        $state = trim($out[0] ?? '');
-
-        return $state === '' ? null : $state[0];
     }
 
     /**

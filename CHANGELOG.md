@@ -22,9 +22,12 @@ runs Dynoxide 1.7.0.
 
 - **Stopping a server reaches every process its wrapper started.** The walk
   over a server's process tree stopped at 256 processes, so a wrapper that
-  had started more than that left the rest running after `stop()`. The walk
-  now has a ten-second limit instead, after which it kills everything it has
-  found.
+  had started more than that left the rest running after `stop()`. There's no
+  limit on the count now. The walk reads the process table once for each
+  level of the tree, where on macOS it used to run `ps` several times for
+  every process, so a tree of 301 processes there takes 0.15 s rather than
+  about 11. It stops after ten seconds, so a tree that forks faster than that
+  can't hold up `stop()`, and whatever it has found by then is still killed.
 - **Stopping a server no longer misses a child started at that moment.** A
   stop signal that reached a wrapper in the middle of starting a child let
   that child appear after the wrapper's children had been read, so it was
