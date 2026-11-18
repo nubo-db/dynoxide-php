@@ -48,6 +48,12 @@ switch ($mode) {
         fwrite(STDERR, "still warming up\n");
         $untilEndOfInput();
 
+    // What the engine prints and exits with when its --port is taken.
+    case 'port-in-use':
+        $port = $argv[array_search('--port', $argv, true) + 1];
+        fwrite(STDERR, "error: port {$port} is already in use (detected listener on 127.0.0.1:{$port})\n");
+        exit(4);
+
     case 'exit':
         fwrite(STDERR, "boom: the database is locked\n");
         exit((int) (getenv('FAKE_EXIT_CODE') ?: 3));

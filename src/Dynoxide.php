@@ -21,8 +21,8 @@ use Dynoxide\Process\Launcher;
 final class Dynoxide
 {
     /**
-     * Finds or downloads the binary, starts a server on a free port on
-     * 127.0.0.1, and returns once it's ready.
+     * Finds or downloads the binary, starts a server on 127.0.0.1, by default
+     * on a free port, and returns once it's ready.
      *
      * @param Options|array<string, mixed> $options
      */

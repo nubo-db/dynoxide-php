@@ -5,6 +5,22 @@ runs Dynoxide 1.7.0.
 
 ## [Unreleased]
 
+### Added
+
+- **`start()` takes a `port` option.** It defaults to 0, so the operating
+  system still picks a free port. A fixed port is for dev setups where
+  something needs the endpoint in advance. If the port is taken, `start()`
+  throws the new `PortInUseException`, which extends `StartException` and
+  says which port in its `port` property. It reads that from the engine's
+  exit status, not its stderr. A port outside 0 to 65535 throws a
+  `DynoxideException` before anything starts, and so does a fixed port with
+  a binary older than 1.7.0. The PHPUnit extension stays on port 0.
+
+### Changed
+
+- `StartException` is no longer `final`, so `PortInUseException` can extend
+  it.
+
 ## [1.7.0.1] - 2026-11-17
 
 Still runs Dynoxide 1.7.0. A fourth version part marks a fix to the package

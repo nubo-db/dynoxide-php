@@ -123,9 +123,26 @@ $server = Dynoxide::start([
 ]);
 ```
 
-The others are `binary`, `binaryFromPath`, and `log`: a closure that gets
-the line printed once per start (which binary ran and where it's listening),
-instead of it going to stderr. Give each server its own `dbPath`.
+The others are `binary`, `binaryFromPath`, `log` and `port`. `log` is a
+closure that gets the line printed once per start (which binary ran and where
+it's listening), instead of it going to stderr. Give each server its own
+`dbPath`.
+
+`port` defaults to 0, which has the operating system pick a free port. That's
+what tests want, so parallel runs never collide, and the PHPUnit extension
+always uses it. A fixed port is for a dev setup where something needs the
+endpoint in advance, such as a second app or an `.env` file:
+
+```php
+$server = Dynoxide::start(['port' => 8000]);
+```
+
+If that port is taken, `start()` throws a `Dynoxide\Exception\PortInUseException`,
+whose `port` property says which one. It extends `StartException`, so code
+that already catches that still does. A fixed port needs Dynoxide 1.7.0 or
+later, and a binary older than 1.8.0 reports a taken port as a plain
+`StartException`, whose stderr lines name the port. A `port` outside 0 to
+65535, or not an integer, throws a `DynoxideException` before anything starts.
 
 A `Server` has `endpoint`, `host`, `port`, `region`, `accessKeyId` and
 `secretAccessKey`, and `clientConfig()` returns an array you can hand

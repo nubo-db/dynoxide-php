@@ -20,6 +20,9 @@ final class Options
      * @param float $startTimeout seconds to wait for the server to be ready
      * @param (\Closure(string): void)|null $log receives the line logged once per start, saying
      *        which binary ran and where it's listening, and any warnings. Defaults to stderr.
+     * @param int $port the port to listen on. 0, the default, has the operating system pick a free
+     *        one, which is what a test suite wants. A fixed port suits a dev setup where something
+     *        needs the endpoint in advance, and needs Dynoxide 1.7.0 or later.
      */
     public function __construct(
         public readonly ?string $binary = null,
@@ -28,9 +31,13 @@ final class Options
         public readonly ?string $schema = null,
         public readonly float $startTimeout = 10.0,
         public readonly ?\Closure $log = null,
+        public readonly int $port = 0,
     ) {
         if (!is_finite($startTimeout) || $startTimeout <= 0) {
             throw new DynoxideException('startTimeout must be more than 0 seconds, not ' . var_export($startTimeout, true) . '.');
+        }
+        if ($port < 0 || $port > 65535) {
+            throw new DynoxideException("port must be from 0 to 65535, not {$port}.");
         }
     }
 
@@ -42,7 +49,7 @@ final class Options
      */
     public static function fromArray(array $options): self
     {
-        $known = ['binary', 'binaryFromPath', 'dbPath', 'schema', 'startTimeout', 'log'];
+        $known = ['binary', 'binaryFromPath', 'dbPath', 'schema', 'startTimeout', 'log', 'port'];
         $unknown = array_diff(array_keys($options), $known);
         if ($unknown !== []) {
             throw new DynoxideException(

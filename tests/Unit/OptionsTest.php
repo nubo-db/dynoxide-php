@@ -25,6 +25,37 @@ final class OptionsTest extends TestCase
         Options::fromArray(['db_path' => '/tmp/a.db']);
     }
 
+    public function testThePortDefaultsToZeroAndTakesAFixedOne(): void
+    {
+        self::assertSame(0, (new Options())->port);
+        self::assertSame(8000, Options::fromArray(['port' => 8000])->port);
+        self::assertSame(65535, (new Options(port: 65535))->port);
+    }
+
+    public function testRefusesAPortOutOfRange(): void
+    {
+        foreach ([-1, 65536] as $port) {
+            try {
+                new Options(port: $port);
+                self::fail("port {$port} was accepted");
+            } catch (DynoxideException $e) {
+                self::assertStringContainsString("port must be from 0 to 65535, not {$port}", $e->getMessage());
+            }
+        }
+    }
+
+    public function testRefusesAPortThatIsNotAnInteger(): void
+    {
+        foreach (['8000', 8000.0] as $port) {
+            try {
+                Options::fromArray(['port' => $port]);
+                self::fail('port ' . var_export($port, true) . ' was accepted');
+            } catch (DynoxideException $e) {
+                self::assertStringContainsString('A Dynoxide option has the wrong type', $e->getMessage());
+            }
+        }
+    }
+
     public function testRefusesAnOptionOfTheWrongType(): void
     {
         $this->expectException(DynoxideException::class);
