@@ -238,13 +238,19 @@ final class ServerProcess
         }
     }
 
+    /**
+     * Removes the directory and its files. Another run's sweep can remove it
+     * at the same time, so whatever has already gone is passed over quietly.
+     */
     public static function removeDir(string $dir): void
     {
-        foreach (@scandir($dir) ?: [] as $entry) {
-            if ($entry !== '.' && $entry !== '..') {
-                @unlink($dir . DIRECTORY_SEPARATOR . $entry);
+        ProcessTree::quietly(static function () use ($dir): void {
+            foreach (scandir($dir) ?: [] as $entry) {
+                if ($entry !== '.' && $entry !== '..') {
+                    unlink($dir . DIRECTORY_SEPARATOR . $entry);
+                }
             }
-        }
-        @rmdir($dir);
+            rmdir($dir);
+        });
     }
 }

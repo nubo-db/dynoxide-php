@@ -110,9 +110,12 @@ final class Leftovers
         // Written aside then renamed, so a sweep never reads half of it.
         $file = $dir . DIRECTORY_SEPARATOR . self::FILE;
         $temp = $file . '.' . getmypid();
-        if (@file_put_contents($temp, json_encode($record)) !== false && !@rename($temp, $file)) {
-            @unlink($temp);
-        }
+        // The directory can be removed by another run's sweep meanwhile.
+        ProcessTree::quietly(static function () use ($temp, $file, $record): void {
+            if (file_put_contents($temp, json_encode($record)) !== false && !rename($temp, $file)) {
+                unlink($temp);
+            }
+        });
     }
 
     /** @return array{clock: string, owner: array{int, string}, server: array<int, string>, abandoned: bool}|null */

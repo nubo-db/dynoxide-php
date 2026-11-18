@@ -30,12 +30,13 @@ runs Dynoxide 1.7.0.
   that child appear after the wrapper's children had been read, so it was
   left running. `stop()` now waits for each process to stop before reading
   its children.
-- **No more warnings in Pest from the leftover sweep.** A `dynoxide-*`
-  directory in the temp directory without an `owner.json` made Pest report a
-  warning on every run that started Dynoxide, and on Linux so did a record
-  whose processes had gone. The reads that are expected to fail no longer
-  reach the error handler. PHPUnit didn't show these, because they were
-  silenced with `@`.
+- **Pest no longer reports warnings from the leftover sweep.** A
+  `dynoxide-*` directory in the temp directory without an `owner.json` made
+  Pest report a warning on every run that started Dynoxide. On Linux a record
+  whose processes had gone did the same, and so did two runs sweeping the
+  same leftover at once. Those reads were silenced with `@`, which hides them
+  from PHPUnit but not from Pest's error handler. They now don't reach the
+  handler at all.
   ([#8](https://github.com/nubo-db/dynoxide-php/issues/8))
 
 ### Changed

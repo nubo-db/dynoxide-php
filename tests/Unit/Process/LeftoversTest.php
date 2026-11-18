@@ -6,6 +6,7 @@ namespace Dynoxide\Tests\Unit\Process;
 
 use Dynoxide\Process\Leftovers;
 use Dynoxide\Process\ProcessTree;
+use Dynoxide\Process\ServerProcess;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -142,6 +143,27 @@ final class LeftoversTest extends TestCase
      */
     private static function sweepCollectingWarnings(string $root): array
     {
+        return self::collectingWarnings(static fn () => Leftovers::sweep($root, 0.1));
+    }
+
+    /**
+     * Two sweeps can find the same leftover, and the slower one then removes
+     * a directory that has already gone.
+     */
+    public function testRemovingADirectoryThatHasGoneRaisesNoWarning(): void
+    {
+        $dir = $this->tempDir() . '/dynoxide-' . str_repeat('5c', 8);
+        mkdir($dir, 0700);
+        touch("{$dir}/stdout.log");
+        ServerProcess::removeDir($dir);
+
+        self::assertSame([], self::collectingWarnings(static fn () => ServerProcess::removeDir($dir)));
+        self::assertDirectoryDoesNotExist($dir);
+    }
+
+    /** @return list<string> */
+    private static function collectingWarnings(callable $run): array
+    {
         $warnings = [];
         set_error_handler(static function (int $level, string $message) use (&$warnings): bool {
             $warnings[] = $message;
@@ -149,7 +171,7 @@ final class LeftoversTest extends TestCase
             return true;
         });
         try {
-            Leftovers::sweep($root, 0.1);
+            $run();
         } finally {
             restore_error_handler();
         }
