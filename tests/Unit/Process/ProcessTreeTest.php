@@ -16,6 +16,53 @@ final class ProcessTreeTest extends TestCase
     use TempDir;
 
     /**
+     * A tree bigger than any fixed limit on the walk is killed whole. The
+     * children are started up front and left running, so the size is certain
+     * and timing plays no part.
+     */
+    public function testKillReachesEveryChildOfALargeTree(): void
+    {
+        $dir = $this->tempDir();
+        $log = $dir . '/children';
+        $count = 300;
+        $script = $dir . '/many.sh';
+        file_put_contents($script, <<<SH
+            i=0
+            while [ \$i -lt {$count} ]; do
+                sh -c 'echo \$\$ >> "\$1"; exec sleep 30' sh {$log} &
+                i=\$((i + 1))
+            done
+            wait
+            SH);
+        $wrapper = proc_open(['/bin/sh', $script], [], $pipes);
+        self::assertIsResource($wrapper);
+        $pid = (int) proc_get_status($wrapper)['pid'];
+        try {
+            $deadline = microtime(true) + 20;
+            while (count(@file($log, FILE_IGNORE_NEW_LINES) ?: []) < $count) {
+                self::assertLessThan($deadline, microtime(true), 'the wrapper never started all its children');
+                usleep(50_000);
+                clearstatcache();
+            }
+
+            ProcessTree::kill($pid);
+            usleep(500_000);
+
+            $children = array_map('intval', file($log, FILE_IGNORE_NEW_LINES) ?: []);
+            $alive = array_values(array_filter($children, static fn (int $c): bool => FakeBinary::alive($c)));
+            self::assertSame([], $alive, count($alive) . ' of ' . count($children) . ' children survived');
+        } finally {
+            foreach (array_map('intval', @file($log, FILE_IGNORE_NEW_LINES) ?: []) as $c) {
+                if (FakeBinary::alive($c)) {
+                    FakeBinary::kill($c);
+                }
+            }
+            proc_terminate($wrapper, 9);
+            proc_close($wrapper);
+        }
+    }
+
+    /**
      * A wrapper can start a child between the tree being read and the kill.
      * Stopping each process before reading its children closes that gap, so
      * even a wrapper that keeps starting children leaves none behind.

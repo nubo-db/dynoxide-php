@@ -16,6 +16,12 @@ runs Dynoxide 1.7.0.
   `DynoxideException` before anything starts, and so does a fixed port with
   a binary older than 1.7.0. The PHPUnit extension stays on port 0.
 
+### Fixed
+
+- **Stopping a server reaches every process its wrapper started.** The walk
+  over a server's process tree stopped at 256 processes, so a wrapper that
+  had started more than that left the rest running after `stop()`.
+
 ### Changed
 
 - `StartException` is no longer `final`, so `PortInUseException` can extend

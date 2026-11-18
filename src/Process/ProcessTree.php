@@ -26,8 +26,9 @@ final class ProcessTree
     /**
      * The process and everything below it, parents first, each with its
      * start time. Read it before signalling anything: once a parent dies its
-     * children are re-parented and can't be found from it. Linux and macOS
-     * only.
+     * children are re-parented and can't be found from it. There's no limit
+     * on its size: each process is read once, so the walk always ends. Linux
+     * and macOS only.
      *
      * @return array<int, string> process ID to start time
      */
@@ -40,7 +41,7 @@ final class ProcessTree
         $tree = [$pid => $start];
         $children = self::childrenByParent();
         $queue = [$pid];
-        while ($queue !== [] && count($tree) < 256) {
+        while ($queue !== []) {
             foreach ($children === null ? self::pgrepChildren(array_shift($queue)) : ($children[array_shift($queue)] ?? []) as $child) {
                 if (!isset($tree[$child]) && ($childStart = self::startTime($child)) !== null) {
                     $tree[$child] = $childStart;
@@ -91,7 +92,9 @@ final class ProcessTree
     /**
      * Kills the process and everything below it. Each is stopped (SIGSTOP)
      * before its children are read, so none can start another child between
-     * the read and the kill. Linux and macOS only.
+     * the read and the kill. Every process in the tree is reached, however
+     * many there are: a cap on the walk would leave the rest running. Linux
+     * and macOS only.
      */
     public static function kill(int $pid): void
     {
@@ -101,7 +104,7 @@ final class ProcessTree
         }
         $tree = [];
         $queue = [$pid => $start];
-        while ($queue !== [] && count($tree) < 256) {
+        while ($queue !== []) {
             $current = array_key_first($queue);
             $tree[$current] = $queue[$current];
             unset($queue[$current]);
