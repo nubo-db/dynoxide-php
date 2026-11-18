@@ -25,6 +25,13 @@ runs Dynoxide 1.7.0.
   had started more than that left the rest running after `stop()`. The walk
   now has a ten-second limit instead, after which it kills everything it has
   found.
+- **No more warnings in Pest from the leftover sweep.** A `dynoxide-*`
+  directory in the temp directory without an `owner.json` made Pest report a
+  warning on every run that started Dynoxide, and on Linux so did a record
+  whose processes had gone. The reads that are expected to fail no longer
+  reach the error handler. PHPUnit didn't show these, because they were
+  silenced with `@`.
+  ([#8](https://github.com/nubo-db/dynoxide-php/issues/8))
 
 ### Changed
 

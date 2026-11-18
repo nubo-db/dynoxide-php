@@ -45,6 +45,43 @@ final class LeftoversTest extends TestCase
         }
     }
 
+    /**
+     * A directory with no owner.json yet (being set up, or left by a run that
+     * died first) is skipped without a warning. A warning silenced with @
+     * still reaches the error handler, and Pest 3 and 4 report it, so a
+     * leftover like this would show "1 warning" on every later run.
+     */
+    public function testADirectoryWithoutARecordIsSkippedWithoutAWarning(): void
+    {
+        $root = $this->tempDir();
+        $dir = $root . '/dynoxide-' . str_repeat('ef', 8);
+        mkdir($dir, 0700);
+        touch("{$dir}/stdout.log");
+        touch("{$dir}/stderr.log");
+
+        self::assertSame([], self::sweepCollectingWarnings($root));
+        self::assertDirectoryExists($dir);
+    }
+
+    /**
+     * On Linux, checking whether a gone owner and server are running reads
+     * /proc files that no longer exist. That mustn't warn either.
+     */
+    public function testARecordWhoseOwnerAndServerHaveGoneIsClearedWithoutAWarning(): void
+    {
+        $root = $this->tempDir();
+        $dir = $root . '/dynoxide-' . str_repeat('9a', 8);
+        mkdir($dir, 0700);
+        file_put_contents("{$dir}/owner.json", json_encode([
+            'clock' => ProcessTree::clock(),
+            'owner' => [999_999, 'long gone'],
+            'server' => [999_998 => 'long gone'],
+        ]));
+
+        self::assertSame([], self::sweepCollectingWarnings($root));
+        self::assertDirectoryDoesNotExist($dir);
+    }
+
     /** A record written under another clock can't be judged, so it's left. */
     public function testARecordFromAnotherClockIsLeftAlone(): void
     {
@@ -95,5 +132,28 @@ final class LeftoversTest extends TestCase
         Leftovers::sweep($root, 0.1);
 
         self::assertDirectoryDoesNotExist($dir);
+    }
+
+    /**
+     * Sweeps $root and returns every warning raised, silenced with @ or not:
+     * Pest reports both.
+     *
+     * @return list<string>
+     */
+    private static function sweepCollectingWarnings(string $root): array
+    {
+        $warnings = [];
+        set_error_handler(static function (int $level, string $message) use (&$warnings): bool {
+            $warnings[] = $message;
+
+            return true;
+        });
+        try {
+            Leftovers::sweep($root, 0.1);
+        } finally {
+            restore_error_handler();
+        }
+
+        return $warnings;
     }
 }

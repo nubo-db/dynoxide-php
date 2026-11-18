@@ -157,7 +157,7 @@ final class ProcessTree
     public static function startTime(int $pid): ?string
     {
         if (is_dir('/proc/self')) {
-            $stat = @file_get_contents("/proc/{$pid}/stat");
+            $stat = self::quietly(static fn () => file_get_contents("/proc/{$pid}/stat"));
             if ($stat === false) {
                 return null;
             }
@@ -193,11 +193,12 @@ final class ProcessTree
             return null;
         }
         $children = [];
-        foreach (@scandir('/proc') ?: [] as $entry) {
+        foreach (self::quietly(static fn () => scandir('/proc')) ?: [] as $entry) {
             if (!ctype_digit($entry)) {
                 continue;
             }
-            $stat = @file_get_contents("/proc/{$entry}/stat");
+            // A process can exit between the listing and the read.
+            $stat = self::quietly(static fn () => file_get_contents("/proc/{$entry}/stat"));
             if ($stat === false) {
                 continue;
             }
@@ -230,8 +231,8 @@ final class ProcessTree
     public static function clock(): ?string
     {
         if (is_dir('/proc/self')) {
-            $boot = @file_get_contents('/proc/sys/kernel/random/boot_id');
-            $namespace = @readlink('/proc/self/ns/pid');
+            $boot = self::quietly(static fn () => file_get_contents('/proc/sys/kernel/random/boot_id'));
+            $namespace = self::quietly(static fn () => readlink('/proc/self/ns/pid'));
 
             return $boot === false || trim($boot) === '' || $namespace === false ? null : 'proc:' . trim($boot) . ':' . $namespace;
         }
@@ -252,6 +253,27 @@ final class ProcessTree
             @posix_kill($pid, SIGSTOP);
         } elseif (self::canExec()) {
             @exec('kill -s STOP ' . $pid . ' 2>/dev/null');
+        }
+    }
+
+    /**
+     * Runs $read with no error handler to see its warning: a read of a
+     * process that has just exited fails, and that's expected. Silencing it
+     * with @ isn't enough, because the error handler is still called and Pest
+     * reports what it's given.
+     *
+     * @internal
+     * @template T
+     * @param callable(): T $read
+     * @return T
+     */
+    public static function quietly(callable $read): mixed
+    {
+        set_error_handler(static fn (): bool => true);
+        try {
+            return $read();
+        } finally {
+            restore_error_handler();
         }
     }
 

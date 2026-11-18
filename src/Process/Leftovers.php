@@ -54,8 +54,10 @@ final class Leftovers
         if ($clock === null || $user === null || ProcessTree::startTime(getmypid()) === null) {
             return;
         }
-        foreach (@glob(rtrim($root, '/\\') . DIRECTORY_SEPARATOR . 'dynoxide-*', GLOB_ONLYDIR | GLOB_NOSORT) ?: [] as $dir) {
-            if (!preg_match('/^dynoxide-[0-9a-f]{16}$/', basename($dir)) || is_link($dir) || @fileowner($dir) !== $user) {
+        $dirs = ProcessTree::quietly(static fn () => glob(rtrim($root, '/\\') . DIRECTORY_SEPARATOR . 'dynoxide-*', GLOB_ONLYDIR | GLOB_NOSORT));
+        foreach ($dirs ?: [] as $dir) {
+            // Another run can remove a directory between the listing and here.
+            if (!preg_match('/^dynoxide-[0-9a-f]{16}$/', basename($dir)) || is_link($dir) || ProcessTree::quietly(static fn () => fileowner($dir)) !== $user) {
                 continue;
             }
             $record = self::read($dir);
@@ -116,7 +118,9 @@ final class Leftovers
     /** @return array{clock: string, owner: array{int, string}, server: array<int, string>, abandoned: bool}|null */
     private static function read(string $dir): ?array
     {
-        $data = json_decode((string) @file_get_contents($dir . DIRECTORY_SEPARATOR . self::FILE), true);
+        // Missing while the directory is being set up, or when a run died
+        // before writing it.
+        $data = json_decode((string) ProcessTree::quietly(static fn () => file_get_contents($dir . DIRECTORY_SEPARATOR . self::FILE)), true);
         if (!is_array($data) || !is_string($data['clock'] ?? null) || !is_array($data['server'] ?? null)) {
             return null;
         }
