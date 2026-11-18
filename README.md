@@ -141,8 +141,12 @@ If that port is taken, `start()` throws a `Dynoxide\Exception\PortInUseException
 whose `port` property says which one. It extends `StartException`, so code
 that already catches that still does. A fixed port needs Dynoxide 1.7.0 or
 later, and a binary older than 1.8.0 reports a taken port as a plain
-`StartException`, whose stderr lines name the port. A `port` outside 0 to
-65535, or not an integer, throws a `DynoxideException` before anything starts.
+`StartException`, whose stderr lines name the port. It also misses a server
+on the other loopback address, such as `[::1]:8000` when you asked for 8000,
+which a `localhost` client may reach instead. On Windows, a port held by a
+socket that isn't listening can still give a plain `StartException`. A `port`
+outside 0 to 65535, or not an integer, throws a `DynoxideException` before
+anything starts.
 
 A `Server` has `endpoint`, `host`, `port`, `region`, `accessKeyId` and
 `secretAccessKey`, and `clientConfig()` returns an array you can hand
