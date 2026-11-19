@@ -17,7 +17,7 @@ final class ProcessTreeTest extends TestCase
 
     /**
      * A tree bigger than any fixed limit on the walk is killed whole, down to
-     * the grandchildren, and well inside the walk's time limit: one cut short
+     * the grandchildren, and inside the walk's time limit: one cut short
      * kills what it has found but not the children of what it hasn't walked.
      * The tree is started up front and left running, so its size is certain.
      */
@@ -51,12 +51,18 @@ final class ProcessTreeTest extends TestCase
                 clearstatcache();
             }
 
-            self::assertGreaterThan(2 * $count, count(ProcessTree::of($pid)), 'the walk stopped short of the whole tree');
+            // The tree has stopped growing, so this times one read of the
+            // process table. The old per-process walk took about 7 s here on macOS.
+            $started = hrtime(true);
+            $tree = ProcessTree::of($pid);
+            self::assertLessThan(4.0, (hrtime(true) - $started) / 1e9, 'reading the tree took a call per process');
+            self::assertGreaterThan(2 * $count, count($tree), 'the walk stopped short of the whole tree');
             $started = hrtime(true);
             ProcessTree::kill($pid);
             $seconds = (hrtime(true) - $started) / 1e9;
             // The old walk took about 11 s for this tree on macOS and this one
-            // well under a second; a slow runner gets room below the limit.
+            // well under a second. 8 s leaves a slow runner room while still
+            // sitting below the walk's ten-second limit.
             self::assertLessThan(8.0, $seconds, 'the walk ran close to its ten-second limit');
             usleep(500_000);
 
