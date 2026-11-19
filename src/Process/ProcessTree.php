@@ -139,10 +139,11 @@ final class ProcessTree
     {
         // Killing one process takes everything under it, so the rest of the
         // tree is checked again before each kill, and each kill checks the
-        // start time once more in case the ID has been reused since.
+        // start time once more in case the ID has been reused since. Each
+        // pass takes one ID off, so this ends, and each kill has its own
+        // time limit.
         $unchecked = $tree;
-        $deadline = hrtime(true) + (int) (self::KILL_WALK_SECONDS * 1e9);
-        while (hrtime(true) < $deadline) {
+        while (true) {
             $table = self::table();
             $left = array_filter($unchecked, static fn (string $start, int $pid): bool => ($table[$pid][2] ?? null) === $start && $table[$pid][1] !== 'Z', ARRAY_FILTER_USE_BOTH);
             if ($left === []) {

@@ -104,6 +104,58 @@ final class ProcessTreeTest extends TestCase
     }
 
     /**
+     * killAll() goes on to each recorded process that's still the one
+     * recorded, reaching the children it has started since, and leaves one
+     * recorded under another start time. Only the roots are recorded here,
+     * so their children are found only by walking each root.
+     */
+    public function testKillAllWalksEachRecordedRootAndSkipsAMismatch(): void
+    {
+        $dir = $this->tempDir();
+        $roots = [];
+        $tree = [];
+        foreach (['a', 'b'] as $name) {
+            $roots[$name] = proc_open(['/bin/sh', '-c', 'sleep 30 & echo $! > "$1"; wait', 'sh', "{$dir}/{$name}"], [], $pipes);
+            self::assertIsResource($roots[$name]);
+            $pid = (int) proc_get_status($roots[$name])['pid'];
+            $tree[$pid] = (string) ProcessTree::startTime($pid);
+        }
+        $other = proc_open([PHP_BINARY, '-r', 'sleep(20);'], [], $pipes);
+        self::assertIsResource($other);
+        $otherPid = (int) proc_get_status($other)['pid'];
+        $children = [];
+        try {
+            $deadline = microtime(true) + 10;
+            foreach (['a', 'b'] as $name) {
+                while (!is_file("{$dir}/{$name}") || trim((string) file_get_contents("{$dir}/{$name}")) === '') {
+                    self::assertLessThan($deadline, microtime(true), 'a root never started its child');
+                    usleep(20_000);
+                    clearstatcache();
+                }
+                $children[] = (int) trim((string) file_get_contents("{$dir}/{$name}"));
+            }
+
+            ProcessTree::killAll($tree + [$otherPid => 'not when it started']);
+            usleep(300_000);
+
+            foreach ($children as $child) {
+                self::assertFalse(FakeBinary::alive($child), "child {$child} of a recorded root survived: " . FakeBinary::describe($child));
+            }
+            self::assertTrue(FakeBinary::alive($otherPid), 'killAll() signalled a process that was not the one recorded');
+        } finally {
+            foreach ($children as $child) {
+                if (FakeBinary::alive($child)) {
+                    FakeBinary::kill($child);
+                }
+            }
+            foreach ([...$roots, $other] as $process) {
+                proc_terminate($process, 9);
+                proc_close($process);
+            }
+        }
+    }
+
+    /**
      * A wrapper can start a child between the tree being read and the kill.
      * Stopping each process before reading its children closes that gap, so
      * even a wrapper that keeps starting children leaves none behind.

@@ -162,7 +162,8 @@ final class Leftovers
             return true;
         }
         foreach (ProcessTree::running($tree) as $pid => $start) {
-            $tree = ProcessTree::of($pid, $start) + $tree;
+            // Added after what was recorded, so the tree stays parents first.
+            $tree += ProcessTree::of($pid, $start);
         }
         ProcessTree::signal($tree, 15);
         $deadline = microtime(true) + $graceSeconds;
