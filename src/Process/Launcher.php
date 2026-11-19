@@ -63,7 +63,9 @@ final class Launcher
         $dir = $this->outputDir();
         $process = $this->spawn($binary, $options, $dir);
         Registry::add($process);
-        $spawned = ProcessTree::of($process->pid);
+        // Read only while it's running: once PHP has collected an exited
+        // process its ID is free, and could belong to someone else by now.
+        $spawned = $process->rememberTree();
         Leftovers::record($dir, $spawned);
 
         // Until the Server is returned nobody else can stop it, so anything

@@ -68,7 +68,13 @@ final class ServerProcess
     public function rememberTree(): array
     {
         if (!$this->windows && $this->exited() === null) {
-            $this->knownTree = ProcessTree::of($this->pid);
+            $tree = ProcessTree::of($this->pid);
+            // Unless something outside PHP collected it meanwhile (SIGCHLD
+            // ignored, or a pcntl handler), it couldn't have freed its ID
+            // between the check and the read. Asking again catches that.
+            if ($this->exited() === null) {
+                $this->knownTree = $tree;
+            }
         }
 
         return $this->knownTree;
