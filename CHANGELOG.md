@@ -41,11 +41,14 @@ runs Dynoxide 1.7.0.
   from PHPUnit but not from Pest's error handler. They now don't reach the
   handler at all.
   ([#8](https://github.com/nubo-db/dynoxide-php/issues/8))
-- **Stopping a server signals only the processes it recorded.** A process
-  ID the operating system had reused, in the moment between one process in
-  the tree being killed and the next, could be stopped and killed along with
-  everything under it, though it wasn't Dynoxide's. Each kill now checks the
-  start time recorded with the ID first.
+- **Stopping a server checks each process is still the one it recorded.**
+  A process ID the operating system had reused, in the moment between one
+  process in the tree being killed and the next, could be stopped and killed
+  along with everything under it, though it wasn't Dynoxide's. Each kill now
+  compares the start time recorded with the ID against the process table
+  first, which narrows that window to the instant between the check and the
+  signal. PHP has no way to signal a process by anything steadier than its
+  ID, so it can't be closed entirely.
   ([#12](https://github.com/nubo-db/dynoxide-php/issues/12))
 
 ### Changed

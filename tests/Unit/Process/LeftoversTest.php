@@ -7,6 +7,7 @@ namespace Dynoxide\Tests\Unit\Process;
 use Dynoxide\Process\Leftovers;
 use Dynoxide\Process\ProcessTree;
 use Dynoxide\Process\ServerProcess;
+use Dynoxide\Tests\Support\FakeBinary;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -43,6 +44,50 @@ final class LeftoversTest extends TestCase
         } finally {
             proc_terminate($owner, 9);
             proc_close($owner);
+        }
+    }
+
+    /**
+     * A recorded server ID can have been freed and taken again by a new
+     * child of the same server. The sweep walks the server, finds that child
+     * under its own start time, and must stop it too rather than keep the
+     * stale start time and skip it.
+     */
+    public function testASweepStopsAChildThatReusedARecordedId(): void
+    {
+        $root = $this->tempDir();
+        $dir = $root . '/dynoxide-' . str_repeat('7e', 8);
+        mkdir($dir, 0700);
+        $log = $root . '/child';
+        $server = proc_open(['/bin/sh', '-c', 'sleep 30 & echo $! > "$1"; wait', 'sh', $log], [], $pipes);
+        self::assertIsResource($server);
+        $serverPid = (int) proc_get_status($server)['pid'];
+        $child = 0;
+        try {
+            $deadline = microtime(true) + 10;
+            while (!is_file($log) || trim((string) file_get_contents($log)) === '') {
+                self::assertLessThan($deadline, microtime(true), 'the server never started its child');
+                usleep(20_000);
+                clearstatcache();
+            }
+            $child = (int) trim((string) file_get_contents($log));
+            $record = [
+                'clock' => ProcessTree::clock(),
+                'owner' => [1, 'not when it started'],
+                'server' => [$serverPid => ProcessTree::startTime($serverPid), $child => 'an earlier process with this ID'],
+            ];
+            file_put_contents($dir . '/owner.json', json_encode($record));
+
+            Leftovers::sweep($root, 1.0);
+            usleep(200_000);
+
+            self::assertNull(ProcessTree::startTime($child), 'the child that reused a recorded ID was left running');
+        } finally {
+            if ($child > 0 && ProcessTree::startTime($child) !== null) {
+                FakeBinary::kill($child);
+            }
+            proc_terminate($server, 9);
+            proc_close($server);
         }
     }
 
