@@ -81,6 +81,29 @@ final class ProcessTreeTest extends TestCase
     }
 
     /**
+     * A start time that doesn't match stands in for a process ID that has
+     * been reused since the tree was recorded: that process isn't ours, so
+     * neither walking nor killing it may touch it.
+     */
+    public function testAProcessWhoseStartTimeDoesNotMatchIsLeftAlone(): void
+    {
+        $other = proc_open([PHP_BINARY, '-r', 'sleep(20);'], [], $pipes);
+        self::assertIsResource($other);
+        $pid = (int) proc_get_status($other)['pid'];
+        try {
+            self::assertNotNull(ProcessTree::startTime($pid));
+
+            self::assertSame([], ProcessTree::of($pid, 'not when it started'));
+            ProcessTree::kill($pid, 'not when it started');
+            usleep(200_000);
+            self::assertTrue(FakeBinary::alive($pid), 'kill() signalled a process that was not the one recorded');
+        } finally {
+            proc_terminate($other, 9);
+            proc_close($other);
+        }
+    }
+
+    /**
      * A wrapper can start a child between the tree being read and the kill.
      * Stopping each process before reading its children closes that gap, so
      * even a wrapper that keeps starting children leaves none behind.

@@ -161,8 +161,8 @@ final class Leftovers
         if (ProcessTree::running($tree) === []) {
             return true;
         }
-        foreach (array_keys(ProcessTree::running($tree)) as $pid) {
-            $tree = ProcessTree::of($pid) + $tree;
+        foreach (ProcessTree::running($tree) as $pid => $start) {
+            $tree = ProcessTree::of($pid, $start) + $tree;
         }
         ProcessTree::signal($tree, 15);
         $deadline = microtime(true) + $graceSeconds;

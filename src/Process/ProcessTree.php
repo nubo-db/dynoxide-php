@@ -36,13 +36,16 @@ final class ProcessTree
      * one reading of the process table, so it ends however fast the tree
      * forks, and there's no limit on its size. Linux and macOS only.
      *
+     * Given $recorded, the start time the process had when it was recorded,
+     * a process that has started since under the same ID isn't walked.
+     *
      * @return array<int, string> process ID to start time
      */
-    public static function of(int $pid): array
+    public static function of(int $pid, ?string $recorded = null): array
     {
         $table = self::table();
         $start = $table[$pid][2] ?? null;
-        if ($start === null || $table[$pid][1] === 'Z') {
+        if ($start === null || $table[$pid][1] === 'Z' || ($recorded !== null && $start !== $recorded)) {
             return [];
         }
         $tree = [$pid => $start];
@@ -98,13 +101,15 @@ final class ProcessTree
      * read and the kill. There's no limit on the tree's size. The walk does
      * stop after KILL_WALK_SECONDS, so a tree that forks faster than it can
      * be walked can't hold stop() for ever, and whatever has been found by
-     * then is still killed. Linux and macOS only.
+     * then is still killed. Given $recorded, the start time the process had
+     * when it was recorded, a process that has started since under the same
+     * ID is left alone. Linux and macOS only.
      */
-    public static function kill(int $pid): void
+    public static function kill(int $pid, ?string $recorded = null): void
     {
         $table = self::table();
         $start = $table[$pid][2] ?? null;
-        if ($start === null) {
+        if ($start === null || ($recorded !== null && $start !== $recorded)) {
             return;
         }
         $found = [];
@@ -132,8 +137,20 @@ final class ProcessTree
      */
     public static function killAll(array $tree): void
     {
-        foreach (array_keys(self::running($tree)) as $pid) {
-            self::kill($pid);
+        // Killing one process takes everything under it, so the rest of the
+        // tree is checked again before each kill, and each kill checks the
+        // start time once more in case the ID has been reused since.
+        $unchecked = $tree;
+        $deadline = hrtime(true) + (int) (self::KILL_WALK_SECONDS * 1e9);
+        while (hrtime(true) < $deadline) {
+            $table = self::table();
+            $left = array_filter($unchecked, static fn (string $start, int $pid): bool => ($table[$pid][2] ?? null) === $start && $table[$pid][1] !== 'Z', ARRAY_FILTER_USE_BOTH);
+            if ($left === []) {
+                break;
+            }
+            $pid = array_key_first($left);
+            self::kill($pid, $left[$pid]);
+            unset($unchecked[$pid]);
         }
         self::signal($tree, 9);
     }
