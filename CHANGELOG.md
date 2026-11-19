@@ -50,6 +50,12 @@ runs Dynoxide 1.7.0.
   signal. PHP has no way to signal a process by anything steadier than its
   ID, so it can't be closed entirely.
   ([#12](https://github.com/nubo-db/dynoxide-php/issues/12))
+- **A server that exits at once no longer leaves a stranger in the leftovers
+  record.** Its process tree was read after PHP had collected the exited
+  process, when its ID was free for another, so that process could be
+  recorded and later stopped by a sweep. The tree is now read only while the
+  server is still running.
+  ([#13](https://github.com/nubo-db/dynoxide-php/issues/13))
 
 ### Changed
 
