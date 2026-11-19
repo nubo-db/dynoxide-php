@@ -328,6 +328,7 @@ final class PHPUnitExtensionTest extends TestCase
             self::assertSame(0, $report['status'], 'nothing answered');
             if ($report['label'] !== 'isolated') {
                 self::assertSame('threw ' . StartException::class, $report['extension'], 'the extension hands out the failure');
+                self::assertStringContainsString("Dynoxide didn't start", $report['failure'], 'the report says why');
             }
         }
     }

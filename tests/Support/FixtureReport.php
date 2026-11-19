@@ -17,7 +17,7 @@ final class FixtureReport
      * Requests get ten seconds, since a first request to a server on a cold
      * Windows runner can be slow; a refused connection still fails at once.
      *
-     * @return array{label: string, pid: int, token: string, endpoint: string, status: int, error: string, tables: list<string>, extension: string}
+     * @return array{label: string, pid: int, token: string, endpoint: string, status: int, error: string, tables: list<string>, extension: string, failure: string}
      */
     public static function record(string $label, ?string $table = null): array
     {
@@ -49,6 +49,7 @@ final class FixtureReport
             'error' => $error,
             'tables' => $tables,
             'extension' => self::extension(),
+            'failure' => self::failure(),
         ];
         file_put_contents((string) getenv('FIXTURE_REPORT'), json_encode($report) . "\n", FILE_APPEND | LOCK_EX);
         // For the hard-kill tests: hold the test open so the runner can be
@@ -59,6 +60,22 @@ final class FixtureReport
         }
 
         return $report;
+    }
+
+    /**
+     * Why the extension's server didn't start, or "" if it did. A failure on
+     * a shared CI runner is often seen once, so the reason has to be in the
+     * report the test prints.
+     */
+    private static function failure(): string
+    {
+        try {
+            Extension::server();
+
+            return '';
+        } catch (\Throwable $e) {
+            return $e->getMessage();
+        }
     }
 
     /** What Extension::server() gives: the server's endpoint, "none", or the class it threw. */
