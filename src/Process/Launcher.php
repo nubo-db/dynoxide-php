@@ -6,6 +6,8 @@ namespace Dynoxide\Process;
 
 use Dynoxide\Binary\LocatedBinary;
 use Dynoxide\Download\Url;
+use Dynoxide\Exception\DynoxideException;
+use Dynoxide\Exception\PortInUseException;
 use Dynoxide\Exception\StartException;
 use Dynoxide\Options;
 use Dynoxide\Server;
@@ -18,6 +20,9 @@ use Dynoxide\Server;
 final class Launcher
 {
     private const POLL_MICROSECONDS = 25_000;
+
+    /** The engine's exit status for a --port that is already taken (launcher contract 2). */
+    private const EXIT_PORT_IN_USE = 4;
 
     /**
      * Turns a binary's path into the command that runs it; replaceable so
@@ -45,6 +50,15 @@ final class Launcher
     public function start(LocatedBinary $binary, Options $options): Server
     {
         $log = $options->logger();
+        // Without the launcher flags, readiness is a listening line and then
+        // GET / answering, and a foreign server already on a fixed port would
+        // pass the second check.
+        if ($options->port !== 0 && !$binary->launcherFlags) {
+            throw new DynoxideException(
+                "A fixed port needs Dynoxide 1.7.0 or later, and {$binary->describe()} is older. "
+                . 'Leave port at 0 to have the operating system pick one.',
+            );
+        }
         Leftovers::sweep($this->tempRoot, $this->graceSeconds, $this->osFamily === 'Windows');
         $dir = $this->outputDir();
         $process = $this->spawn($binary, $options, $dir);
@@ -56,7 +70,7 @@ final class Launcher
         // that goes wrong first, the log callback included, stops it here.
         try {
             $ready = $binary->launcherFlags
-                ? $this->readyLine($process, $binary, $options->startTimeout)
+                ? $this->readyLine($process, $binary, $options->startTimeout, $options->port)
                 : $this->listeningLine($process, $binary, $options->startTimeout);
             Leftovers::record($dir, $process->rememberTree() + $spawned);
 
@@ -99,7 +113,7 @@ final class Launcher
 
     private function spawn(LocatedBinary $binary, Options $options, string $dir): ServerProcess
     {
-        $args = [...($this->command)($binary->path), 'serve', '--port', '0'];
+        $args = [...($this->command)($binary->path), 'serve', '--port', (string) $options->port];
         if ($binary->launcherFlags) {
             $args[] = '--ready-json';
             $args[] = '--exit-with-parent';
@@ -158,7 +172,7 @@ final class Launcher
     }
 
     /** Waits for the first stdout line of a server started with --ready-json. */
-    private function readyLine(ServerProcess $process, LocatedBinary $binary, float $timeout): ReadyLine
+    private function readyLine(ServerProcess $process, LocatedBinary $binary, float $timeout, int $port): ReadyLine
     {
         $stdout = $process->outputDir . DIRECTORY_SEPARATOR . 'stdout.log';
         $deadline = microtime(true) + $timeout;
@@ -172,7 +186,7 @@ final class Launcher
                     throw $this->failure($process, $binary, $e->getMessage(), $e);
                 }
             }
-            $this->checkStillRunning($process, $binary);
+            $this->checkStillRunning($process, $binary, $port);
             if (microtime(true) >= $deadline) {
                 throw $this->failure($process, $binary, "didn't print its ready line within {$timeout} seconds");
             }
@@ -218,11 +232,21 @@ final class Launcher
         }
     }
 
-    private function checkStillRunning(ServerProcess $process, LocatedBinary $binary): void
+    /** @param int $port the port asked for, or 0 when the operating system picks one */
+    private function checkStillRunning(ServerProcess $process, LocatedBinary $binary, int $port = 0): void
     {
         $exited = $process->exited();
         if ($exited === null) {
             return;
+        }
+        // The status is read before the stderr tail, which can lag behind it.
+        if ($port !== 0 && !$exited['signaled'] && $exited['exitcode'] === self::EXIT_PORT_IN_USE) {
+            $tail = $process->stderrTail();
+            throw new PortInUseException(
+                $port,
+                "Port {$port} is already in use, so the Dynoxide server ({$binary->describe()}) couldn't start on it."
+                . ($tail === '' ? '' : " Its last stderr lines:\n{$tail}"),
+            );
         }
         $how = match (true) {
             $exited['signaled'] => "was killed by signal {$exited['termsig']}",

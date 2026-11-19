@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Dynoxide\Tests\Unit\Process;
 
+use Dynoxide\Exception\DynoxideException;
+use Dynoxide\Exception\PortInUseException;
 use Dynoxide\Exception\StartException;
 use Dynoxide\Options;
 use Dynoxide\Process\Registry;
@@ -42,9 +44,9 @@ final class LauncherTest extends TestCase
         return $server;
     }
 
-    private function options(float $timeout = 10.0, ?string $dbPath = null, ?string $schema = null): Options
+    private function options(float $timeout = 10.0, ?string $dbPath = null, ?string $schema = null, int $port = 0): Options
     {
-        return new Options(dbPath: $dbPath, schema: $schema, startTimeout: $timeout, log: function (string $line): void {
+        return new Options(dbPath: $dbPath, schema: $schema, startTimeout: $timeout, port: $port, log: function (string $line): void {
             $this->logged[] = $line;
         });
     }
@@ -127,6 +129,50 @@ final class LauncherTest extends TestCase
             ['serve', '--port', '0', '--ready-json', '--exit-with-parent', '--db-path=/data/a.db', '--schema=/data/schema.json'],
             $this->recorded($record)['args'],
         );
+    }
+
+    public function testPassesAFixedPort(): void
+    {
+        $record = $this->tempDir() . '/record.json';
+        $this->start(['FAKE_RECORD' => $record], options: $this->options(port: 8123));
+
+        self::assertSame(['serve', '--port', '8123'], array_slice($this->recorded($record)['args'], 0, 3));
+    }
+
+    public function testATakenFixedPortIsAPortInUseException(): void
+    {
+        $e = $this->assertStartFails(
+            ['FAKE_MODE' => 'port-in-use'],
+            "/^Port 8123 is already in use.*Its last stderr lines:\nerror: port 8123 is already in use \(detected listener/s",
+            options: $this->options(port: 8123),
+        );
+
+        self::assertInstanceOf(PortInUseException::class, $e);
+        self::assertSame(8123, $e->port);
+    }
+
+    public function testExitStatusFourWithoutAFixedPortIsAPlainStartException(): void
+    {
+        $e = $this->assertStartFails(['FAKE_MODE' => 'port-in-use'], '/exited with status 4 before it was ready/');
+
+        self::assertNotInstanceOf(PortInUseException::class, $e);
+    }
+
+    public function testRefusesAFixedPortWithABinaryOlderThanTheLauncherFlags(): void
+    {
+        $record = $this->tempDir() . '/record.json';
+        $before = Registry::count();
+        try {
+            $this->start(['FAKE_MODE' => 'legacy', 'FAKE_RECORD' => $record], options: $this->options(port: 8123), flags: false);
+            self::fail('expected the start to be refused');
+        } catch (StartException $e) {
+            self::fail('refused as a failed start rather than before spawning: ' . $e->getMessage());
+        } catch (DynoxideException $e) {
+            self::assertStringContainsString('port', $e->getMessage());
+            self::assertStringContainsString('1.7.0', $e->getMessage());
+        }
+        self::assertFileDoesNotExist($record, 'nothing was spawned');
+        self::assertSame($before, Registry::count());
     }
 
     public function testDoesNotPassOnTheEncryptionKey(): void

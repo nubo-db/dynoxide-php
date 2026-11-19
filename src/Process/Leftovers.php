@@ -54,8 +54,10 @@ final class Leftovers
         if ($clock === null || $user === null || ProcessTree::startTime(getmypid()) === null) {
             return;
         }
-        foreach (@glob(rtrim($root, '/\\') . DIRECTORY_SEPARATOR . 'dynoxide-*', GLOB_ONLYDIR | GLOB_NOSORT) ?: [] as $dir) {
-            if (!preg_match('/^dynoxide-[0-9a-f]{16}$/', basename($dir)) || is_link($dir) || @fileowner($dir) !== $user) {
+        $dirs = ProcessTree::quietly(static fn () => glob(rtrim($root, '/\\') . DIRECTORY_SEPARATOR . 'dynoxide-*', GLOB_ONLYDIR | GLOB_NOSORT));
+        foreach ($dirs ?: [] as $dir) {
+            // Another run can remove a directory between the listing and here.
+            if (!preg_match('/^dynoxide-[0-9a-f]{16}$/', basename($dir)) || is_link($dir) || ProcessTree::quietly(static fn () => fileowner($dir)) !== $user) {
                 continue;
             }
             $record = self::read($dir);
@@ -85,19 +87,22 @@ final class Leftovers
 
     /**
      * Who this process creates files as, from a file made to find out: the
-     * posix extension isn't always installed.
+     * posix extension isn't always installed. The file calls are made
+     * quietly, since an error handler sees warnings that `@` hides.
+     *
+     * @internal
      */
-    private static function user(string $root): ?int
+    public static function user(string $root, bool $posix = true): ?int
     {
-        if (function_exists('posix_geteuid')) {
+        if ($posix && function_exists('posix_geteuid')) {
             return posix_geteuid();
         }
-        $probe = @tempnam($root, 'dynoxide-probe-');
-        if ($probe === false) {
+        $probe = ProcessTree::quietly(static fn () => tempnam($root, 'dynoxide-probe-'));
+        if (!is_string($probe)) {
             return null;
         }
-        $owner = @fileowner($probe);
-        @unlink($probe);
+        $owner = ProcessTree::quietly(static fn () => fileowner($probe));
+        ProcessTree::quietly(static fn () => unlink($probe));
 
         return $owner === false ? null : $owner;
     }
@@ -108,15 +113,20 @@ final class Leftovers
         // Written aside then renamed, so a sweep never reads half of it.
         $file = $dir . DIRECTORY_SEPARATOR . self::FILE;
         $temp = $file . '.' . getmypid();
-        if (@file_put_contents($temp, json_encode($record)) !== false && !@rename($temp, $file)) {
-            @unlink($temp);
-        }
+        // The directory can be removed by another run's sweep meanwhile.
+        ProcessTree::quietly(static function () use ($temp, $file, $record): void {
+            if (file_put_contents($temp, json_encode($record)) !== false && !rename($temp, $file)) {
+                unlink($temp);
+            }
+        });
     }
 
     /** @return array{clock: string, owner: array{int, string}, server: array<int, string>, abandoned: bool}|null */
     private static function read(string $dir): ?array
     {
-        $data = json_decode((string) @file_get_contents($dir . DIRECTORY_SEPARATOR . self::FILE), true);
+        // Missing while the directory is being set up, or when a run died
+        // before writing it.
+        $data = json_decode((string) ProcessTree::quietly(static fn () => file_get_contents($dir . DIRECTORY_SEPARATOR . self::FILE)), true);
         if (!is_array($data) || !is_string($data['clock'] ?? null) || !is_array($data['server'] ?? null)) {
             return null;
         }

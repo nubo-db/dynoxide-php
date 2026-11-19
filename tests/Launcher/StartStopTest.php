@@ -6,6 +6,8 @@ namespace Dynoxide\Tests\Launcher;
 
 use Dynoxide\Binary\Source;
 use Dynoxide\Dynoxide;
+use Dynoxide\Exception\PortInUseException;
+use Dynoxide\Exception\StartException;
 use Dynoxide\Options;
 use Dynoxide\Server;
 use Dynoxide\Tests\Support\Dynamo;
@@ -57,9 +59,9 @@ final class StartStopTest extends TestCase
         putenv("{$name}={$value}");
     }
 
-    private function start(?string $dbPath = null): Server
+    private function start(?string $dbPath = null, int $port = 0): Server
     {
-        $server = Dynoxide::start(new Options(binary: $this->binary(), dbPath: $dbPath, log: function (string $line): void {
+        $server = Dynoxide::start(new Options(binary: $this->binary(), dbPath: $dbPath, port: $port, log: function (string $line): void {
             $this->logged[] = $line;
         }));
         $this->servers[] = $server;
@@ -125,6 +127,37 @@ final class StartStopTest extends TestCase
         self::assertSame(0, $a->stop());
         self::assertLessThan(2.5, microtime(true) - $started, 'well within the 5 second grace period');
         self::assertSame(200, Dynamo::call($b->endpoint, 'ListTables')[0]);
+    }
+
+    /**
+     * A port free a moment ago can be taken before the server binds it, so a
+     * lost race is retried. A binary older than 1.8.0 reports that as a plain
+     * StartException rather than a PortInUseException.
+     */
+    public function testStartsOnTheFixedPortItIsGiven(): void
+    {
+        for ($attempt = 1; ; $attempt++) {
+            $probe = stream_socket_server('tcp://127.0.0.1:0');
+            self::assertNotFalse($probe);
+            $port = (int) substr((string) strrchr((string) stream_socket_get_name($probe, false), ':'), 1);
+            fclose($probe);
+            try {
+                $server = $this->start(port: $port);
+                break;
+            } catch (StartException $e) {
+                // Something took the port between the probe and the start.
+                // A binary before 1.8.0 reports that only in its stderr tail.
+                $taken = $e instanceof PortInUseException
+                    || stripos($e->getMessage(), "port {$port} is already in use") !== false;
+                if ($attempt >= 5 || !$taken) {
+                    throw $e;
+                }
+            }
+        }
+
+        self::assertSame($port, $server->port);
+        self::assertSame("http://127.0.0.1:{$port}", $server->endpoint);
+        self::assertSame(200, Dynamo::call($server->endpoint, 'ListTables')[0]);
     }
 
     /** Output goes to files, so heavy logging never fills a pipe and stalls requests. */

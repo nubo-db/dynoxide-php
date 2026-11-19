@@ -6,6 +6,7 @@ namespace Dynoxide\Tests\Unit\Process;
 
 use Dynoxide\Process\Leftovers;
 use Dynoxide\Process\ProcessTree;
+use Dynoxide\Process\ServerProcess;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -43,6 +44,43 @@ final class LeftoversTest extends TestCase
             proc_terminate($owner, 9);
             proc_close($owner);
         }
+    }
+
+    /**
+     * A directory with no owner.json yet (being set up, or left by a run that
+     * died first) is skipped without a warning. A warning silenced with @
+     * still reaches the error handler, and Pest 3 and 4 report it, so a
+     * leftover like this would show "1 warning" on every later run.
+     */
+    public function testADirectoryWithoutARecordIsSkippedWithoutAWarning(): void
+    {
+        $root = $this->tempDir();
+        $dir = $root . '/dynoxide-' . str_repeat('ef', 8);
+        mkdir($dir, 0700);
+        touch("{$dir}/stdout.log");
+        touch("{$dir}/stderr.log");
+
+        self::assertSame([], self::sweepCollectingWarnings($root));
+        self::assertDirectoryExists($dir);
+    }
+
+    /**
+     * On Linux, checking whether a gone owner and server are running reads
+     * /proc files that no longer exist. That mustn't warn either.
+     */
+    public function testARecordWhoseOwnerAndServerHaveGoneIsClearedWithoutAWarning(): void
+    {
+        $root = $this->tempDir();
+        $dir = $root . '/dynoxide-' . str_repeat('9a', 8);
+        mkdir($dir, 0700);
+        file_put_contents("{$dir}/owner.json", json_encode([
+            'clock' => ProcessTree::clock(),
+            'owner' => [999_999, 'long gone'],
+            'server' => [999_998 => 'long gone'],
+        ]));
+
+        self::assertSame([], self::sweepCollectingWarnings($root));
+        self::assertDirectoryDoesNotExist($dir);
     }
 
     /** A record written under another clock can't be judged, so it's left. */
@@ -95,5 +133,65 @@ final class LeftoversTest extends TestCase
         Leftovers::sweep($root, 0.1);
 
         self::assertDirectoryDoesNotExist($dir);
+    }
+
+    /**
+     * Sweeps $root and returns every warning raised, silenced with @ or not:
+     * Pest reports both.
+     *
+     * @return list<string>
+     */
+    private static function sweepCollectingWarnings(string $root): array
+    {
+        return self::collectingWarnings(static fn () => Leftovers::sweep($root, 0.1));
+    }
+
+    /**
+     * Two sweeps can find the same leftover, and the slower one then removes
+     * a directory that has already gone.
+     */
+    public function testRemovingADirectoryThatHasGoneRaisesNoWarning(): void
+    {
+        $dir = $this->tempDir() . '/dynoxide-' . str_repeat('5c', 8);
+        mkdir($dir, 0700);
+        touch("{$dir}/stdout.log");
+        ServerProcess::removeDir($dir);
+
+        self::assertSame([], self::collectingWarnings(static fn () => ServerProcess::removeDir($dir)));
+        self::assertDirectoryDoesNotExist($dir);
+    }
+
+    /**
+     * Without the posix extension the user is found from a probe file, and
+     * a root that has gone makes tempnam() warn. An error handler must not
+     * see that.
+     */
+    public function testFindingTheUserWithoutPosixRaisesNoWarning(): void
+    {
+        $gone = $this->tempDir() . '/gone';
+        $user = null;
+
+        self::assertSame([], self::collectingWarnings(static function () use ($gone, &$user): void {
+            $user = Leftovers::user($gone, false);
+        }));
+        self::assertIsInt($user, 'the probe file was not made in the system temporary directory');
+    }
+
+    /** @return list<string> */
+    private static function collectingWarnings(callable $run): array
+    {
+        $warnings = [];
+        set_error_handler(static function (int $level, string $message) use (&$warnings): bool {
+            $warnings[] = $message;
+
+            return true;
+        });
+        try {
+            $run();
+        } finally {
+            restore_error_handler();
+        }
+
+        return $warnings;
     }
 }

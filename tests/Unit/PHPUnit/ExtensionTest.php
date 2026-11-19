@@ -63,6 +63,7 @@ final class ExtensionTest extends TestCase
         $options = $this->optionsFor([]);
 
         self::assertSame([null, false, null, null, 10.0], [$options->binary, $options->binaryFromPath, $options->dbPath, $options->schema, $options->startTimeout]);
+        self::assertSame(0, $options->port, 'a test suite always gets a free port');
     }
 
     public function testRelativePathsAreRelativeToTheConfigurationFile(): void
