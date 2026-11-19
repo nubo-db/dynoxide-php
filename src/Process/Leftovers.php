@@ -161,8 +161,11 @@ final class Leftovers
         if (ProcessTree::running($tree) === []) {
             return true;
         }
-        foreach (array_keys(ProcessTree::running($tree)) as $pid) {
-            $tree = ProcessTree::of($pid) + $tree;
+        foreach (ProcessTree::running($tree) as $pid => $start) {
+            // Merged into what was recorded, so the tree stays parents first,
+            // with the start times read now: a recorded ID a new child has
+            // taken since must be stopped under its new start time.
+            $tree = array_replace($tree, ProcessTree::of($pid, $start));
         }
         ProcessTree::signal($tree, 15);
         $deadline = microtime(true) + $graceSeconds;
