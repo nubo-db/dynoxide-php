@@ -87,19 +87,22 @@ final class Leftovers
 
     /**
      * Who this process creates files as, from a file made to find out: the
-     * posix extension isn't always installed.
+     * posix extension isn't always installed. The file calls are made
+     * quietly, since an error handler sees warnings that `@` hides.
+     *
+     * @internal
      */
-    private static function user(string $root): ?int
+    public static function user(string $root, bool $posix = true): ?int
     {
-        if (function_exists('posix_geteuid')) {
+        if ($posix && function_exists('posix_geteuid')) {
             return posix_geteuid();
         }
-        $probe = @tempnam($root, 'dynoxide-probe-');
-        if ($probe === false) {
+        $probe = ProcessTree::quietly(static fn () => tempnam($root, 'dynoxide-probe-'));
+        if (!is_string($probe)) {
             return null;
         }
-        $owner = @fileowner($probe);
-        @unlink($probe);
+        $owner = ProcessTree::quietly(static fn () => fileowner($probe));
+        ProcessTree::quietly(static fn () => unlink($probe));
 
         return $owner === false ? null : $owner;
     }

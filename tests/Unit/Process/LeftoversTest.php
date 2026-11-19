@@ -161,6 +161,22 @@ final class LeftoversTest extends TestCase
         self::assertDirectoryDoesNotExist($dir);
     }
 
+    /**
+     * Without the posix extension the user is found from a probe file, and
+     * a root that has gone makes tempnam() warn. An error handler must not
+     * see that.
+     */
+    public function testFindingTheUserWithoutPosixRaisesNoWarning(): void
+    {
+        $gone = $this->tempDir() . '/gone';
+        $user = null;
+
+        self::assertSame([], self::collectingWarnings(static function () use ($gone, &$user): void {
+            $user = Leftovers::user($gone, false);
+        }));
+        self::assertIsInt($user, 'the probe file was not made in the system temporary directory');
+    }
+
     /** @return list<string> */
     private static function collectingWarnings(callable $run): array
     {
