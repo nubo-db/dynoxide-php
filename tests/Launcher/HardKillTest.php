@@ -250,7 +250,7 @@ final class HardKillTest extends TestCase
             $endpoints = [];
             foreach (file($report, FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
                 $seen = json_decode($line, true, 8, JSON_THROW_ON_ERROR);
-                self::assertSame(200, $seen['status'], 'the test reached its server');
+                self::assertSame(200, $seen['status'], "the test reached its server\n" . json_encode($seen, JSON_PRETTY_PRINT) . "\n" . file_get_contents("{$dir}/output.txt"));
                 $endpoints[$seen['endpoint']] = true;
             }
             $endpoints = array_keys($endpoints);
