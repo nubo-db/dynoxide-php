@@ -163,9 +163,10 @@ final class ProcessTreeTest extends TestCase
     public function testKillLeavesNothingAWrapperKeepsStarting(): void
     {
         $dir = $this->tempDir();
-        $log = var_export($dir . '/children', true);
-        // Each child logs itself, so one started just before the stop is seen.
-        $child = var_export([PHP_BINARY, '-r', 'file_put_contents(' . $log . ', getmypid() . PHP_EOL, FILE_APPEND | LOCK_EX); sleep(20);'], true);
+        // Each child logs itself, so one started just before the stop is
+        // seen. A shell starts in milliseconds where PHP takes far longer,
+        // which matters with hundreds starting at once on a shared runner.
+        $child = var_export(['/bin/sh', '-c', 'echo $$ >> "$1"; exec sleep 20', 'sh', $dir . '/children'], true);
         $script = $dir . '/spawner.php';
         file_put_contents($script, <<<PHP
             <?php
@@ -182,9 +183,9 @@ final class ProcessTreeTest extends TestCase
         $pid = (int) proc_get_status($wrapper)['pid'];
         $children = [];
         try {
-            $deadline = microtime(true) + 10;
-            while (count(@file($dir . '/children', FILE_IGNORE_NEW_LINES) ?: []) < 20) {
-                self::assertLessThan($deadline, microtime(true), 'the wrapper never started children');
+            $started = microtime(true);
+            while (($logged = count(@file($dir . '/children', FILE_IGNORE_NEW_LINES) ?: [])) < 20) {
+                self::assertLessThan($started + 10, microtime(true), "the wrapper never started children: {$logged} had logged after 10 s");
                 usleep(20_000);
                 clearstatcache();
             }
