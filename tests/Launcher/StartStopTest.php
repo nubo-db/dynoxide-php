@@ -160,6 +160,32 @@ final class StartStopTest extends TestCase
         self::assertSame(200, Dynamo::call($server->endpoint, 'ListTables')[0]);
     }
 
+    /**
+     * A fixed port something already listens on gives PortInUseException,
+     * naming the port. It takes Dynoxide 1.8.0, which exits 4 for a taken
+     * port; CI runs the release this package embeds, so it never skips there.
+     */
+    public function testATakenPortThrowsPortInUseException(): void
+    {
+        $binary = $this->binary();
+        $version = trim((string) shell_exec(escapeshellarg($binary) . ' --version'));
+        if (version_compare(substr($version, strlen('dynoxide ')), '1.8.0', '<')) {
+            self::markTestSkipped("Needs Dynoxide 1.8.0 or later, and {$binary} is \"{$version}\".");
+        }
+        $holder = stream_socket_server('tcp://127.0.0.1:0');
+        self::assertNotFalse($holder);
+        $port = (int) substr((string) strrchr((string) stream_socket_get_name($holder, false), ':'), 1);
+        try {
+            $this->start(port: $port);
+            self::fail("started on port {$port}, which was taken");
+        } catch (PortInUseException $e) {
+            self::assertSame($port, $e->port);
+            self::assertStringContainsString("Port {$port} is already in use", $e->getMessage());
+        } finally {
+            fclose($holder);
+        }
+    }
+
     /** Output goes to files, so heavy logging never fills a pipe and stalls requests. */
     public function testHeavyLoggingNeverStallsRequests(): void
     {

@@ -17,9 +17,9 @@ It needs PHP 8.1 or later on Linux (x86_64 or arm64), macOS (Intel or Apple
 silicon) or Windows (x86_64). On Windows it also needs `ext-zip` to unpack the
 download, and says so if it's missing.
 
-The package is versioned in step with Dynoxide: version 1.7.0 of this package
-runs Dynoxide 1.7.0, and carries that release's checksums. A fix to the
-package alone adds a fourth part, so 1.7.0.1 still runs Dynoxide 1.7.0.
+The package is versioned in step with Dynoxide: version 1.8.0 of this package
+runs Dynoxide 1.8.0, and carries that release's checksums. A fix to the
+package alone adds a fourth part, so 1.8.0.1 would still run Dynoxide 1.8.0.
 
 ## With PHPUnit
 
@@ -291,7 +291,7 @@ $binary = Dynoxide::locate();
 
 $binary->path;          // the absolute path to run
 $binary->source;        // a Dynoxide\Binary\Source case: Option, Path, Environment, Cache or Download
-$binary->version;       // what it reports, such as 1.7.0
+$binary->version;       // what it reports, such as 1.8.0
 $binary->launcherFlags; // false for 1.6.x, which predates --ready-json and --exit-with-parent
 ```
 
