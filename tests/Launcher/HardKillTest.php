@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dynoxide\Tests\Launcher;
 
+use Dynoxide\Tests\Support\ChildEnv;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\TestCase;
 
@@ -188,7 +189,7 @@ final class HardKillTest extends TestCase
      * of servers whose parents are killed don't build up.
      *
      * @param array<string, string> $extra
-     * @return array<string, string>
+     * @return list<string>
      */
     private function childEnv(array $extra = []): array
     {
@@ -201,7 +202,8 @@ final class HardKillTest extends TestCase
         $tmp = $this->tempDir() . DIRECTORY_SEPARATOR . 'tmp';
         @mkdir($tmp);
 
-        return array_merge($env, ['TMPDIR' => $tmp, 'TEMP' => $tmp, 'TMP' => $tmp], $extra);
+        // array_replace, not array_merge, which would renumber a variable whose name is a number.
+        return ChildEnv::pairs(array_replace($env, ['TMPDIR' => $tmp, 'TEMP' => $tmp, 'TMP' => $tmp], $extra));
     }
 
     /**

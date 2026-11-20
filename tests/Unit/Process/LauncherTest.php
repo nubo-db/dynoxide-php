@@ -183,6 +183,23 @@ final class LauncherTest extends TestCase
         self::assertSame([], $this->recorded($record)['encryptionKeys']);
     }
 
+    /**
+     * PHP keeps a name made of digits as an integer key, and proc_open()
+     * would pass that variable without its name. On Windows the server then
+     * didn't start at all: CreateProcess said "The parameter is incorrect".
+     * ParaTest and Pest workers there sometimes have such a variable.
+     */
+    public function testPassesOnAVariableWhoseNameIsANumber(): void
+    {
+        $record = $this->tempDir() . '/record.json';
+        $env = ['FAKE_RECORD' => $record, '606356171' => 'numbered'];
+        self::assertArrayHasKey(606356171, $env, 'PHP made the name an integer key');
+
+        $this->start($env);
+
+        self::assertSame('numbered', $this->recorded($record)['numbered']);
+    }
+
     /** Windows reads variable names in any case, so the key goes in any case there. */
     public function testDropsTheEncryptionKeyInAnyCaseOnWindowsOnly(): void
     {

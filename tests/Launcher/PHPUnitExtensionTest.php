@@ -6,6 +6,7 @@ namespace Dynoxide\Tests\Launcher;
 
 use Dynoxide\Exception\StartException;
 use Dynoxide\Process\ProcessTree;
+use Dynoxide\Tests\Support\ChildEnv;
 use Dynoxide\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -234,7 +235,8 @@ final class PHPUnitExtensionTest extends TestCase
                 unset($childEnv[$name]);
             }
         }
-        $childEnv = array_merge($childEnv, $this->binaryEnv, ['FIXTURE_REPORT' => $report], $env);
+        // array_replace, not array_merge, which would renumber a variable whose name is a number.
+        $childEnv = ChildEnv::pairs(array_replace($childEnv, $this->binaryEnv, ['FIXTURE_REPORT' => $report], $env));
 
         // One handle for both streams, so they share a file position. Two
         // handles opened in append mode write over each other on Windows.

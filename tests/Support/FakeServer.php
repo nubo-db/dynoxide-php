@@ -17,7 +17,7 @@ final class FakeServer
     public const SCRIPT = __DIR__ . '/../Fixtures/fake-server.php';
 
     /**
-     * @param array<string, string> $env added to this process's environment
+     * @param array<array-key, string> $env added to this process's environment
      */
     public static function launcher(
         array $env = [],
@@ -25,7 +25,8 @@ final class FakeServer
         ?string $tempRoot = null,
         string $osFamily = PHP_OS_FAMILY,
     ): Launcher {
-        $launcher = new Launcher(array_merge(getenv(), $env), $osFamily);
+        // array_replace, not array_merge, which would renumber a variable whose name is a number.
+        $launcher = new Launcher(array_replace(getenv(), $env), $osFamily);
         (function () use ($graceSeconds, $tempRoot): void {
             $this->command = static fn (string $path): array => [PHP_BINARY, $path];
             $this->graceSeconds = $graceSeconds;

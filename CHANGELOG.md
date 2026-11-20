@@ -56,6 +56,15 @@ runs Dynoxide 1.7.0.
   recorded and later stopped by a sweep. The tree is now read only while the
   server is still running.
   ([#13](https://github.com/nubo-db/dynoxide-php/issues/13))
+- **On Windows, a parallel test worker can start its server again.** About
+  one ParaTest or Pest worker in fifty inherits an environment variable whose
+  name is all digits, because Symfony Process names the variables it makes
+  with random hex. PHP keeps such a name as an integer key, and `proc_open()`
+  passed that variable without its name, so every start in that worker failed
+  with "CreateProcess failed: The parameter is incorrect". The environment now
+  goes to `proc_open()` as `name=value` strings. On Linux and macOS the server
+  started but didn't get that variable; now it does.
+  ([#17](https://github.com/nubo-db/dynoxide-php/issues/17))
 
 ### Changed
 
