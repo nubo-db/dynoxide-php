@@ -1,9 +1,11 @@
 # Changelog
 
-The package is versioned in step with Dynoxide: version 1.7.0 of this package
-runs Dynoxide 1.7.0.
+The package is versioned in step with Dynoxide: version 1.8.0 of this package
+runs Dynoxide 1.8.0.
 
 ## [Unreleased]
+
+## [1.8.0] - 2026-11-20
 
 ### Added
 
@@ -68,6 +70,7 @@ runs Dynoxide 1.7.0.
 
 ### Changed
 
+- **Runs Dynoxide 1.8.0**, up from 1.7.0, with that release's checksums.
 - `StartException` is no longer `final`, so `PortInUseException` can extend
   it.
 
