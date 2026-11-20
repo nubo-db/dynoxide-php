@@ -39,7 +39,8 @@ final class Launcher
     private float $graceSeconds = 5.0;
 
     /**
-     * @param array<string, string> $env the environment the server gets, less DYNOXIDE_ENCRYPTION_KEY
+     * @param array<array-key, string> $env the environment the server gets, less DYNOXIDE_ENCRYPTION_KEY;
+     *        getenv() gives a variable whose name is a number an integer key
      */
     public function __construct(private readonly array $env, private readonly string $osFamily = PHP_OS_FAMILY)
     {
@@ -156,17 +157,28 @@ final class Launcher
      * The parent's environment without DYNOXIDE_ENCRYPTION_KEY: a test server
      * never wants encryption, and a release binary refuses to start with it set.
      *
-     * @return array<string, string>
+     * Each variable goes to proc_open() as one "name=value" string. PHP keeps
+     * a name like "606356171" as an integer key, and proc_open() writes a
+     * variable with an integer key as its value alone, with no "name=". On
+     * Windows that breaks the whole environment block, and CreateProcess
+     * fails with "The parameter is incorrect". Symfony Process, which ParaTest
+     * and Pest start their workers with, names the variables it makes on
+     * Windows with eight random hex digits and a counter, so about one worker
+     * in fifty gets a name like that. Empty values are left out, as
+     * proc_open() did with the name-keyed array.
+     *
+     * @return list<string>
      */
     private function childEnv(): array
     {
         $env = [];
         foreach ($this->env as $name => $value) {
+            $name = (string) $name;
             $drop = $this->osFamily === 'Windows'
-                ? strcasecmp((string) $name, 'DYNOXIDE_ENCRYPTION_KEY') === 0
+                ? strcasecmp($name, 'DYNOXIDE_ENCRYPTION_KEY') === 0
                 : $name === 'DYNOXIDE_ENCRYPTION_KEY';
-            if (!$drop) {
-                $env[(string) $name] = (string) $value;
+            if (!$drop && $value !== '') {
+                $env[] = $name . '=' . $value;
             }
         }
 

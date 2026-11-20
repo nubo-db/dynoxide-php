@@ -2,9 +2,9 @@
 
 // A stand-in for `dynoxide serve`, run through PHP so it works on every
 // platform. FAKE_MODE picks the behaviour. FAKE_RECORD, if set, is a file that
-// gets the arguments and the names of any variables that are
-// DYNOXIDE_ENCRYPTION_KEY in some case. FAKE_MARKER, if set, is written when
-// stdin reaches end-of-file.
+// gets the arguments, the variable named 606356171, and the names of any
+// variables that are DYNOXIDE_ENCRYPTION_KEY in some case. FAKE_MARKER, if
+// set, is written when stdin reaches end-of-file.
 
 declare(strict_types=1);
 
@@ -13,6 +13,7 @@ $record = getenv('FAKE_RECORD');
 if ($record !== false && $record !== '') {
     file_put_contents($record, json_encode([
         'args' => array_slice($argv, 1),
+        'numbered' => getenv('606356171'),
         'encryptionKeys' => array_values(array_filter(
             array_keys(getenv()),
             static fn ($name): bool => strcasecmp((string) $name, 'DYNOXIDE_ENCRYPTION_KEY') === 0,
