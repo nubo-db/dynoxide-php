@@ -1,9 +1,21 @@
 # Changelog
 
-The package is versioned in step with Dynoxide: version 1.8.0 of this package
-runs Dynoxide 1.8.0.
+The package is versioned in step with Dynoxide: version 1.8.1 of this package
+runs Dynoxide 1.8.1.
 
 ## [Unreleased]
+
+## [1.8.1] - 2026-11-27
+
+### Changed
+
+- **Runs Dynoxide 1.8.1**, up from 1.8.0, with that release's checksums. Its
+  stream `ShardId` now has DynamoDB's shape, so the AWS SDK for PHP no longer
+  refuses it before sending GetShardIterator when the table name is under 11
+  characters. A refused CreateTable no longer leaves a half-created table
+  behind. Dynoxide's
+  [changelog](https://github.com/nubo-db/dynoxide/blob/main/CHANGELOG.md#181---2026-11-26)
+  has the rest.
 
 ## [1.8.0] - 2026-11-20
 
