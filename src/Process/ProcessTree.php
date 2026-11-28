@@ -29,6 +29,9 @@ final class ProcessTree
     /** How long kill() waits for a level of the tree to stop before going on. */
     private const STOP_WAIT_SECONDS = 1.0;
 
+    /** @var (\Closure(array<int, array{int, string, string}>): array<int, array{int, string, string}>)|null */
+    private static ?\Closure $tableFilter = null;
+
     /**
      * The process and everything below it, parents first, each with its
      * start time. Read it before signalling anything: once a parent dies its
@@ -170,6 +173,11 @@ final class ProcessTree
      */
     public static function startTime(int $pid): ?string
     {
+        if (self::$tableFilter !== null) {
+            $row = self::table()[$pid] ?? null;
+
+            return $row === null || $row[1] === 'Z' ? null : $row[2];
+        }
         if (is_dir('/proc/self')) {
             $stat = self::quietly(static fn () => file_get_contents("/proc/{$pid}/stat"));
             if ($stat === false) {
@@ -204,6 +212,28 @@ final class ProcessTree
      * @return array<int, array{int, string, string}>
      */
     private static function table(): array
+    {
+        $table = self::readTable();
+
+        return self::$tableFilter === null ? $table : (self::$tableFilter)($table);
+    }
+
+    /**
+     * Passes every read of the process table, startTime() included, through
+     * $filter, or stops given null. A test uses it to show a recorded process
+     * ID as reused at a chosen moment, which a real process table can't be
+     * made to do portably.
+     *
+     * @internal
+     * @param (\Closure(array<int, array{int, string, string}>): array<int, array{int, string, string}>)|null $filter
+     */
+    public static function filterTable(?\Closure $filter): void
+    {
+        self::$tableFilter = $filter;
+    }
+
+    /** @return array<int, array{int, string, string}> */
+    private static function readTable(): array
     {
         $table = [];
         if (is_dir('/proc/self')) {

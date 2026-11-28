@@ -156,6 +156,47 @@ final class ProcessTreeTest extends TestCase
     }
 
     /**
+     * A process ID can be reused between one kill in killAll() and the next.
+     * The filter shows the second recorded process under a new start time
+     * once the first has been killed, as if the ID now belonged to something
+     * else, so killAll() must check again before each kill and leave it be.
+     */
+    public function testKillAllLeavesAnIdReusedAfterAnEarlierKill(): void
+    {
+        $first = proc_open([PHP_BINARY, '-r', 'sleep(20);'], [], $pipes);
+        $second = proc_open([PHP_BINARY, '-r', 'sleep(20);'], [], $pipes);
+        self::assertIsResource($first);
+        self::assertIsResource($second);
+        $firstPid = (int) proc_get_status($first)['pid'];
+        $secondPid = (int) proc_get_status($second)['pid'];
+        try {
+            $tree = [
+                $firstPid => (string) ProcessTree::startTime($firstPid),
+                $secondPid => (string) ProcessTree::startTime($secondPid),
+            ];
+            ProcessTree::filterTable(static function (array $table) use ($firstPid, $secondPid): array {
+                if (($table[$firstPid][1] ?? 'Z') === 'Z' && isset($table[$secondPid])) {
+                    $table[$secondPid][2] = 'reused since';
+                }
+
+                return $table;
+            });
+
+            ProcessTree::killAll($tree);
+            usleep(200_000);
+
+            self::assertFalse(FakeBinary::alive($firstPid), 'killAll() never killed the first recorded process');
+            self::assertTrue(FakeBinary::alive($secondPid), 'killAll() signalled an ID reused after an earlier kill');
+        } finally {
+            ProcessTree::filterTable(null);
+            foreach ([$first, $second] as $process) {
+                proc_terminate($process, 9);
+                proc_close($process);
+            }
+        }
+    }
+
+    /**
      * A wrapper can start a child between the tree being read and the kill.
      * Stopping each process before reading its children closes that gap, so
      * even a wrapper that keeps starting children leaves none behind.
