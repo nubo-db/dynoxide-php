@@ -25,6 +25,9 @@ final class AwsEnvironment
     {
         return [
             'AWS_ENDPOINT_URL_DYNAMODB' => $endpoint,
+            // The SDKs treat DynamoDB Streams as a service of its own, and
+            // Dynoxide serves it on the same endpoint.
+            'AWS_ENDPOINT_URL_DYNAMODB_STREAMS' => $endpoint,
             'AWS_ACCESS_KEY_ID' => self::ACCESS_KEY_ID,
             'AWS_SECRET_ACCESS_KEY' => self::SECRET_ACCESS_KEY,
             'AWS_REGION' => self::REGION,

@@ -12,7 +12,7 @@ use PHPUnit\Framework\TestCase;
 final class ServerTest extends TestCase
 {
     private const NAMES = [
-        'AWS_ENDPOINT_URL_DYNAMODB', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
+        'AWS_ENDPOINT_URL_DYNAMODB', 'AWS_ENDPOINT_URL_DYNAMODB_STREAMS', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
         'AWS_DEFAULT_REGION', 'DYNAMODB_ENDPOINT', 'AWS_ENDPOINT_URL', 'AWS_SESSION_TOKEN',
         'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS',
     ];
@@ -54,6 +54,7 @@ final class ServerTest extends TestCase
 
         $expected = [
             'AWS_ENDPOINT_URL_DYNAMODB' => 'http://127.0.0.1:54321',
+            'AWS_ENDPOINT_URL_DYNAMODB_STREAMS' => 'http://127.0.0.1:54321',
             'AWS_ACCESS_KEY_ID' => 'dynoxide',
             'AWS_SECRET_ACCESS_KEY' => 'dynoxide',
             'AWS_REGION' => 'us-east-1',

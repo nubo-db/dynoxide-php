@@ -164,6 +164,7 @@ starts, at the server. It sets these through `putenv()`, `$_ENV` and
 | Variable | Value |
 |---|---|
 | `AWS_ENDPOINT_URL_DYNAMODB` | the server's endpoint |
+| `AWS_ENDPOINT_URL_DYNAMODB_STREAMS` | the server's endpoint, for DynamoDB Streams clients |
 | `DYNAMODB_ENDPOINT` | the server's endpoint, for Laravel's DynamoDB cache and session drivers |
 | `AWS_ACCESS_KEY_ID` | `dynoxide` |
 | `AWS_SECRET_ACCESS_KEY` | `dynoxide` |
