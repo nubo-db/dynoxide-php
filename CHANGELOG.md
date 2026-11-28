@@ -5,6 +5,15 @@ runs Dynoxide 1.8.1.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`exportEnv()` and the PHPUnit extension also set
+  `AWS_ENDPOINT_URL_DYNAMODB_STREAMS`.** The AWS SDK for PHP treats DynamoDB
+  Streams as a separate service with its own variable, so a
+  `DynamoDbStreamsClient` created with no endpoint went to AWS and failed
+  with `UnrecognizedClientException`. A failed start in the extension points
+  it at the same unused port as the DynamoDB endpoint.
+
 ## [1.8.1] - 2026-11-27
 
 ### Changed

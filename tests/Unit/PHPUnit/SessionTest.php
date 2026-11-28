@@ -15,7 +15,7 @@ use PHPUnit\Framework\TestCase;
 final class SessionTest extends TestCase
 {
     private const NAMES = [
-        'AWS_ENDPOINT_URL_DYNAMODB', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
+        'AWS_ENDPOINT_URL_DYNAMODB', 'AWS_ENDPOINT_URL_DYNAMODB_STREAMS', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION',
         'AWS_DEFAULT_REGION', 'DYNAMODB_ENDPOINT', 'AWS_SESSION_TOKEN', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS',
     ];
 
@@ -78,6 +78,7 @@ final class SessionTest extends TestCase
         self::assertNotNull($server);
         self::assertTrue($server->isRunning());
         self::assertSame('http://127.0.0.1:54321', getenv('AWS_ENDPOINT_URL_DYNAMODB'));
+        self::assertSame('http://127.0.0.1:54321', getenv('AWS_ENDPOINT_URL_DYNAMODB_STREAMS'));
         self::assertSame('http://127.0.0.1:54321', $_SERVER['DYNAMODB_ENDPOINT'] ?? null);
 
         $session->stop();
@@ -87,6 +88,7 @@ final class SessionTest extends TestCase
     public function testAFailedStartPointsTheTestsAtAPortWhereNothingListens(): void
     {
         putenv('AWS_ENDPOINT_URL_DYNAMODB=https://dynamodb.eu-west-2.amazonaws.com');
+        putenv('AWS_ENDPOINT_URL_DYNAMODB_STREAMS=https://streams.dynamodb.eu-west-2.amazonaws.com');
         putenv('AWS_SESSION_TOKEN=real-token');
         putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true');
         $session = new Session($this->failing());
@@ -104,6 +106,7 @@ final class SessionTest extends TestCase
         $endpoint = (string) getenv('AWS_ENDPOINT_URL_DYNAMODB');
         self::assertSame('http://127.0.0.1:1', $endpoint);
         self::assertSame($endpoint, $_ENV['AWS_ENDPOINT_URL_DYNAMODB'] ?? null);
+        self::assertSame($endpoint, getenv('AWS_ENDPOINT_URL_DYNAMODB_STREAMS'));
         self::assertSame('dynoxide', getenv('AWS_ACCESS_KEY_ID'));
         self::assertFalse(getenv('AWS_SESSION_TOKEN'));
         self::assertSame('false', getenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'));
